@@ -74,8 +74,8 @@ CLINIC_MAP1               = "https://maps.app.goo.gl/HcZtm5Hq2EDbX2YNA"  # ร�
 CLINIC_MAP2               = "https://maps.app.goo.gl/LhX7jBXETBDcw3jC9"  # หลังม.ศิลปากร
 
 # URL ภายนอกสำหรับ serve รูป (ngrok / production)
-NGROK_DOMAIN              = os.environ.get("NGROK_DOMAIN", "stream-cannon-monogamy.ngrok-free.dev")
-PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", f"https://{NGROK_DOMAIN}")
+NGROK_DOMAIN              = os.environ.get("NGROK_DOMAIN", "stream-cannon-monogamy.ngrok-free.dev").strip()
+PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", f"https://{NGROK_DOMAIN}").strip().rstrip("/")
 DATA_FILE                 = Path(__file__).parent / "drx_data.json"
 
 app = Flask(__name__)
