@@ -1254,6 +1254,48 @@ def test_reset():
 
 
 # ──────────────────────────────────────────────
+#  START SCHEDULER (Daily Summary)
+#  ทำงานเมื่อ Flask app ถูก import (ทั้ง direct run และ gunicorn)
+# ──────────────────────────────────────────────
+_scheduler_instance = None
+try:
+    import scheduler as _scheduler_mod
+    _scheduler_instance = _scheduler_mod.start_scheduler()
+    if _scheduler_instance:
+        log.info("Daily summary scheduler started")
+    else:
+        log.warning("Daily summary scheduler not started (missing deps?)")
+except Exception as _e:
+    log.warning(f"Could not start scheduler: {_e}")
+
+
+@app.route("/debug_scheduler", methods=["GET"])
+def debug_scheduler():
+    """ดู scheduled jobs"""
+    if not _scheduler_instance:
+        return jsonify({"running": False, "jobs": []})
+    jobs = []
+    for job in _scheduler_instance.get_jobs():
+        jobs.append({
+            "id":        job.id,
+            "name":      job.name,
+            "next_run":  str(job.next_run_time) if job.next_run_time else None,
+        })
+    return jsonify({"running": True, "jobs": jobs, "tz": str(_scheduler_instance.timezone)})
+
+
+@app.route("/run_summary_now", methods=["GET"])
+def run_summary_now():
+    """ทดสอบรัน daily summary ทันที (manual trigger)"""
+    try:
+        import scheduler as _s
+        _s.run_daily_summary()
+        return jsonify({"status": "triggered"})
+    except Exception as e:
+        return jsonify({"status": "error", "error": str(e)})
+
+
+# ──────────────────────────────────────────────
 #  MAIN
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
