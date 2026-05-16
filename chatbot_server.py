@@ -1286,13 +1286,59 @@ def debug_scheduler():
 
 @app.route("/run_summary_now", methods=["GET"])
 def run_summary_now():
-    """ทดสอบรัน daily summary ทันที (manual trigger)"""
+    """ทดสอบรัน daily summary ทันที (manual trigger) — return error trace"""
+    import traceback
     try:
         import scheduler as _s
-        _s.run_daily_summary()
-        return jsonify({"status": "triggered"})
+        # ทำทีละขั้นเพื่อ debug
+        import os as _os
+        token = _os.environ.get("LOVELY_BOT_TOKEN", "").strip()
+        target = _os.environ.get("LINE_TARGET_ID", "").strip()
+        if not token:
+            return jsonify({"step": "config", "error": "LOVELY_BOT_TOKEN missing"})
+        if not target:
+            return jsonify({"step": "config", "error": "LINE_TARGET_ID missing"})
+
+        # ลอง fetch DRX
+        try:
+            import drx_bridge
+            ok = drx_bridge.run_fetch()
+            drx_status = "ok" if ok else "fetch_failed"
+        except Exception as e:
+            drx_status = f"exception: {e}"
+
+        # ลองโหลด drx_data.json
+        try:
+            import line_sender
+            data = line_sender.load_data()
+            data_keys = list(data.keys())[:10]
+        except SystemExit as e:
+            return jsonify({"step": "load_data", "drx_status": drx_status,
+                            "error": "drx_data.json not found (SystemExit)"})
+        except Exception as e:
+            return jsonify({"step": "load_data", "drx_status": drx_status,
+                            "error": str(e), "trace": traceback.format_exc()[:1500]})
+
+        # สร้างข้อความ
+        try:
+            msg = line_sender.build_message(data)
+        except Exception as e:
+            return jsonify({"step": "build_message", "drx_status": drx_status,
+                            "error": str(e), "trace": traceback.format_exc()[:1500]})
+
+        # ส่ง LINE
+        try:
+            ok = line_sender.send_line_push(token, target, msg)
+        except Exception as e:
+            return jsonify({"step": "send_line", "drx_status": drx_status,
+                            "msg_len": len(msg),
+                            "error": str(e), "trace": traceback.format_exc()[:1500]})
+
+        return jsonify({"status": "ok", "drx_status": drx_status,
+                        "msg_len": len(msg), "sent": ok})
     except Exception as e:
-        return jsonify({"status": "error", "error": str(e)})
+        return jsonify({"status": "fatal", "error": str(e),
+                        "trace": traceback.format_exc()[:2000]})
 
 
 # ──────────────────────────────────────────────
