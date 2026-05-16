@@ -26,6 +26,28 @@ line_summary.txt
 cloudflared.exe
 *.bat
 setup_task_scheduler.bat
+ngrok.exe
+ngrok.yml
+ngrok_out.txt
+ngrok_err.txt
+
+# Dev-only scripts
+test_login.py
+fb_extract.py
+fb_analyze.py
+fb_download_images.py
+fill_questions.py
+export_fb_replies_excel.py
+fb_conversations.json
+fb_merged.json
+fb_replies.json
+fb_templates.json
+vethospital_system.html
+
+# Claude
+.claude/
+CLAUDE.md
+LINE_SETUP_DONE.md
 
 # Temp / Preview
 email_preview.html

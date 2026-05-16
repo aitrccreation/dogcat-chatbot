@@ -43,7 +43,7 @@ import hmac
 import logging
 from datetime import datetime
 from pathlib import Path
-from flask import Flask, request, jsonify, abort
+from flask import Flask, request, jsonify, abort, send_from_directory
 import requests as req
 
 # โหลด .env ถ้ามี (สำหรับ local dev)
@@ -53,6 +53,12 @@ try:
 except ImportError:
     pass  # dotenv ไม่ได้ติดตั้ง ใช้ env vars จาก OS ได้เลย
 
+# โหลด real replies จาก Facebook history
+from bot_replies import get_reply as _get_real_reply, REAL_REPLIES, FOOTER
+
+# โหลด Q&A database จาก Excel
+import qa_database as qa
+
 # ──────────────────────────────────────────────
 #  CONFIG  (อ่านจาก environment variables)
 # ──────────────────────────────────────────────
@@ -60,8 +66,16 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_TOKEN", "")
 LINE_CHANNEL_SECRET       = os.environ.get("LINE_SECRET", "")
 FB_PAGE_ACCESS_TOKEN      = os.environ.get("FB_TOKEN",  "")
 FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_2026")
-CLINIC_PHONE              = "02-XXX-XXXX"   # ← ใส่เบอร์คลินิก
-CLINIC_LINE_OA            = "@dogcatlovely" # ← LINE OA ID
+CLINIC_PHONE              = "080-4288181"    # สาขาราชวิถี (หลัก)
+CLINIC_PHONE2             = "090-1556446"   # สาขาหลังม.ศิลปากร
+CLINIC_LINE_OA            = "@dogcatlovely" # LINE OA
+CLINIC_LINE_URL           = "https://lin.ee/7bV54ar"
+CLINIC_MAP1               = "https://maps.app.goo.gl/HcZtm5Hq2EDbX2YNA"  # ราชวิถี
+CLINIC_MAP2               = "https://maps.app.goo.gl/LhX7jBXETBDcw3jC9"  # หลังม.ศิลปากร
+
+# URL ภายนอกสำหรับ serve รูป (ngrok / production)
+NGROK_DOMAIN              = os.environ.get("NGROK_DOMAIN", "stream-cannon-monogamy.ngrok-free.dev")
+PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", f"https://{NGROK_DOMAIN}")
 DATA_FILE                 = Path(__file__).parent / "drx_data.json"
 
 app = Flask(__name__)
@@ -95,6 +109,7 @@ def get_data() -> dict:
 # ──────────────────────────────────────────────
 #  INTENT DETECTION
 # ──────────────────────────────────────────────
+# NOTE: ลำดับสำคัญ — intent เฉพาะเจาะจง (cat/dog) ต้องอยู่ก่อน generic
 INTENTS = {
     "greeting": [
         r"สวัสดี", r"หวัดดี", r"ดีครับ", r"ดีค่ะ", r"hello", r"hi",
@@ -102,16 +117,55 @@ INTENTS = {
     ],
     "hours": [
         r"เวลาเปิด", r"เวลาทำการ", r"กี่โมง", r"เปิดกี่โมง", r"ปิดกี่โมง",
-        r"วันไหน", r"วันเสาร์", r"วันอาทิตย์", r"วันหยุด", r"วันจันทร์",
-        r"เปิดไหม", r"ยังเปิดอยู่",
+        r"เปิดไหม", r"ยังเปิดอยู่", r"เปิดทุกวัน",
     ],
-    "price": [
-        r"ราคา", r"ค่าใช้จ่าย", r"ค่าตรวจ", r"ค่า", r"เท่าไร", r"เท่าไหร่",
-        r"กี่บาท", r"แพงไหม",
+    # ── เฉพาะ cat/dog ก่อน ──
+    "neuter_cat": [
+        r"ทำหมัน.*แมว", r"แมว.*ทำหมัน", r"หมันแมว", r"ผ่าหมัน.*แมว",
+    ],
+    "neuter_dog": [
+        r"ทำหมัน.*(หมา|สุนัข|น้องหมา)", r"(หมา|สุนัข).*ทำหมัน",
+        r"หมันหมา", r"หมันสุนัข",
+    ],
+    "csection": [
+        r"ผ่าคลอด", r"คลอด", r"ช่วยคลอด", r"ทำคลอด", r"caesarean", r"c-section", r"csection",
+    ],
+    "neuter": [
+        r"ทำหมัน", r"ผ่าหมัน", r"spay", r"neuter", r"ราคาทำหมัน",
+    ],
+    "vaccine_cat": [
+        r"วัคซีน.*แมว", r"แมว.*วัคซีน", r"ฉีด.*แมว",
+        r"ไข้หัดแมว", r"ลิวคีเมีย",
+    ],
+    "vaccine_dog": [
+        r"วัคซีน.*(หมา|สุนัข|น้องหมา)", r"(หมา|สุนัข).*วัคซีน",
+        r"ฉีด.*(หมา|สุนัข)", r"หัดสุนัข",
+    ],
+    "vaccine": [
+        r"วัคซีน", r"ฉีดวัคซีน", r"rabies", r"พิษสุนัขบ้า",
+        r"ราคาวัคซีน",
+    ],
+    "flea_cat": [
+        r"(เห็บ|หมัด).*แมว", r"แมว.*(เห็บ|หมัด)",
+        r"advocate", r"broadline",
+    ],
+    "flea_dog": [
+        r"(เห็บ|หมัด).*(หมา|สุนัข)", r"(หมา|สุนัข).*(เห็บ|หมัด)",
+        r"nexgard",
+    ],
+    "flea": [
+        r"เห็บ", r"หมัด", r"bravecto",
+        r"ป้องกันเห็บ", r"ยาเห็บ", r"ยาหมัด", r"กำจัดเห็บ",
+    ],
+    "boarding": [
+        r"ฝากเลี้ยง", r"ฝากไว้", r"ฝากแมว", r"ฝากหมา",
+        r"ราคาฝาก", r"ค่าฝาก", r"boarding", r"hotel",
+    ],
+    "bath": [
+        r"อาบน้ำ", r"ตัดขน", r"grooming", r"แต่งขน",
     ],
     "appointment": [
-        r"นัด", r"จอง", r"ลงทะเบียน", r"ต้องการนัด", r"อยากนัด",
-        r"ขอนัด", r"นัดหมาย", r"appointment",
+        r"นัด", r"จอง", r"ลงทะเบียน", r"ขอนัด", r"นัดหมาย", r"appointment",
     ],
     "check_appointment": [
         r"ตรวจสอบนัด", r"เช็คนัด", r"นัดวันไหน", r"นัดกี่โมง",
@@ -119,10 +173,7 @@ INTENTS = {
     ],
     "pet_status": [
         r"สถานะ", r"ยังอยู่ไหม", r"เป็นยังไง", r"อาการ", r"ดีขึ้นไหม",
-        r"รักษาอยู่", r"admit", r"แอดมิท", r"นอน", r"ค้างคืน",
-    ],
-    "vaccine": [
-        r"วัคซีน", r"ฉีดยา", r"rabies", r"พิษสุนัขบ้า", r"7 โรค", r"9 โรค",
+        r"รักษาอยู่", r"admit", r"แอดมิท", r"นอนรพ",
     ],
     "emergency": [
         r"ฉุกเฉิน", r"ด่วน", r"urgent", r"emergency", r"หายใจไม่ออก",
@@ -130,11 +181,15 @@ INTENTS = {
     ],
     "location": [
         r"ที่ตั้ง", r"อยู่ที่ไหน", r"แผนที่", r"เส้นทาง", r"location",
-        r"address", r"ที่อยู่",
+        r"address", r"ที่อยู่", r"สาขา",
+    ],
+    "price": [
+        r"ราคา", r"ค่าใช้จ่าย", r"ค่าตรวจ", r"เท่าไร", r"เท่าไหร่",
+        r"กี่บาท", r"แพงไหม", r"ค่าบริการ",
     ],
     "services": [
         r"บริการ", r"ทำอะไรบ้าง", r"มีอะไรบ้าง", r"service",
-        r"ตรวจ", r"รักษา", r"ผ่าตัด", r"เอ็กซเรย์", r"lab",
+        r"รักษา", r"ผ่าตัด", r"เอ็กซเรย์", r"lab",
     ],
     "staff": [
         r"สัตวแพทย์", r"หมอ", r"ทีม", r"หมอชื่อ", r"vet",
@@ -177,52 +232,130 @@ def get_vets() -> list:
     return data.get("vets", [])
 
 
-def build_response(intent: str, user_msg: str = "") -> str:
-    """สร้างข้อความตอบกลับตาม intent"""
+GREETING_TEXT = (
+    "สวัสดีค่ะ รพส.หมาแมวเลิฟลี่ ยินดีให้บริการค่ะ 🐾\n"
+    "เปิดทุกวัน 8:30-20:30น.\n\n"
+    f"📞 080-4288181 (สาขาถนนราชวิถี)\n"
+    f"📞 090-1556446 (สาขาหลังม.ศิลปากร)\n\n"
+    "📍 Location สาขา1 (ถนนราชวิถี)\n"
+    "https://maps.app.goo.gl/HcZtm5Hq2EDbX2YNA\n\n"
+    "📍 Location สาขา2 (หลังม.ศิลปากร)\n"
+    "https://maps.app.goo.gl/LhX7jBXETBDcw3jC9\n\n"
+    "ต้องการสอบถามเรื่องอะไรเพิ่มเติมคะ"
+)
+
+
+def absolute_image_url(rel_path: str) -> str:
+    """แปลง /static/images/xxx.jpg -> https://host.com/static/images/xxx.jpg"""
+    if rel_path.startswith("http"):
+        return rel_path
+    if rel_path.startswith("/"):
+        return PUBLIC_BASE_URL + rel_path
+    return PUBLIC_BASE_URL + "/" + rel_path
+
+
+def build_response(intent: str, user_msg: str = ""):
+    """
+    สร้างข้อความตอบกลับตาม intent
+    คืน dict: {"text": str, "images": [absolute_url, ...]}
+    """
+    if intent == "greeting":
+        return {"text": GREETING_TEXT, "images": []}
+
+    rep = _get_real_reply(intent)
+    return {
+        "text":   rep["text"],
+        "images": [absolute_image_url(p) for p in rep.get("images", [])],
+    }
+
+
+def build_response_text(intent: str, user_msg: str = "") -> str:
+    """Backward-compat: คืนเฉพาะ text สำหรับ endpoint /test/"""
+    return build_response(intent, user_msg)["text"]
+
+
+# Legacy code path — เก็บไว้เผื่อ debug แต่ไม่ใช้แล้ว
+def _legacy_build_response(intent: str, user_msg: str = "") -> str:
+    """สร้างข้อความตอบกลับตาม intent (legacy — ใช้ build_response)"""
 
     if intent == "greeting":
-        now_h = datetime.now().hour
-        greeting = "สวัสดีตอนเช้า" if now_h < 12 else ("สวัสดีตอนบ่าย" if now_h < 17 else "สวัสดีตอนเย็น")
-        return (
-            f"🐾 {greeting}ครับ!\n"
-            "ยินดีต้อนรับสู่ Dog and Cat Lovely Pet Hospital\n\n"
-            "เราช่วยอะไรได้บ้างครับ? พิมพ์คำถามได้เลย เช่น:\n"
-            "• เวลาเปิด-ปิด\n"
-            "• ราคาค่าตรวจ\n"
-            "• ขอนัดหมาย\n"
-            "• สถานะสัตว์ที่รักษา\n"
-            "• ตำแหน่งที่ตั้ง\n\n"
-            f"📞 โทร {CLINIC_PHONE} (มีเจ้าหน้าที่รับตลอดเวลาทำการ)"
-        )
+        return GREETING_TEXT
 
     elif intent == "hours":
         return (
             "🕐 เวลาทำการ Dog and Cat Lovely\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "📅 จันทร์ – ศุกร์\n"
-            "   🌅 08:00 – 12:00 น.\n"
-            "   🌞 13:00 – 20:00 น.\n\n"
-            "📅 เสาร์ – อาทิตย์\n"
-            "   🌅 08:00 – 20:00 น. (ไม่หยุดพัก)\n\n"
-            "🚨 กรณีฉุกเฉินนอกเวลา\n"
-            f"   📞 โทร {CLINIC_PHONE}\n\n"
-            "ℹ️ วันหยุดนักขัตฤกษ์อาจมีการปรับเวลา\n"
+            "📅 เปิดทุกวัน (ไม่มีวันหยุด)\n"
+            "   ⏰ 08:30 – 20:30 น.\n\n"
+            "📍 สาขาราชวิถี (นครปฐม)\n"
+            f"   📞 {CLINIC_PHONE}\n\n"
+            "📍 สาขาหลังม.ศิลปากร\n"
+            f"   📞 {CLINIC_PHONE2}\n\n"
+            "⚠️ วันหยุดนักขัตฤกษ์อาจมีการปรับเวลา\n"
             "   โปรดโทรสอบถามล่วงหน้าครับ"
+        )
+
+    elif intent == "neuter":
+        return (
+            "✂️ ราคาทำหมัน Dog and Cat Lovely\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🐶 สุนัข:\n"
+            "  น้ำหนัก < 10 กก.\n"
+            "    ตัวเมีย ฿2,500 | ตัวผู้ ฿1,800\n"
+            "  น้ำหนัก 10–20 กก.\n"
+            "    ตัวเมีย ฿3,000 | ตัวผู้ ฿2,000\n"
+            "  น้ำหนัก 20–30 กก.\n"
+            "    ตัวเมีย ฿4,000 | ตัวผู้ ฿2,500\n\n"
+            "🐱 แมว (ตัวผู้):\n"
+            "  📦 รับกลับบ้านได้เลย ฿1,200\n"
+            "     (ผ่าตัด 900 + เลือด 200 + ปลอกคอ 100)\n"
+            "  🏥 พักฟื้นจนตัดไหม ฿2,200\n\n"
+            "ℹ️ ราคาอาจแตกต่างตามน้ำหนักและสุขภาพ\n"
+            f"📞 สอบถาม/นัดทำหมัน: {CLINIC_PHONE}"
+        )
+
+    elif intent == "flea":
+        return (
+            "🦟 ยากำจัดเห็บหมัด\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🐶 สำหรับสุนัข:\n"
+            "  💊 Bravecto      ฿750–1,000 / 3 เดือน\n"
+            "  💊 Nexgard Spectra ฿350–560 / เดือน\n\n"
+            "🐱 สำหรับแมว:\n"
+            "  💊 Advocate      ฿250–300 / เดือน\n"
+            "  💊 Bravecto Plus  ฿700–800 / 3 เดือน\n\n"
+            "ℹ️ ราคาแตกต่างตามน้ำหนักของสัตว์\n"
+            f"📞 สอบถามเพิ่มเติม: {CLINIC_PHONE}"
+        )
+
+    elif intent == "boarding":
+        return (
+            "🏠 บริการฝากเลี้ยง\n"
+            "━━━━━━━━━━━━━━━━━━\n"
+            "🐾 ราคาฝากเลี้ยง: ฿200 / คืน\n\n"
+            "📋 สิ่งที่ต้องเตรียม:\n"
+            "• ประวัติวัคซีน (ถ้ามี)\n"
+            "• อาหารที่น้องกินประจำ\n"
+            "• ยาประจำ (ถ้ามี)\n"
+            "• ของเล่นหรือผ้าห่มที่คุ้นเคย\n\n"
+            f"📞 สำรองที่: {CLINIC_PHONE}\n"
+            f"📞 หรือ: {CLINIC_PHONE2}"
         )
 
     elif intent == "price":
         return (
-            "💰 ราคาบริการ (โดยประมาณ)\n"
+            "💰 ราคาค่าบริการ\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "🩺 ค่าตรวจทั่วไป      ฿150 – 300\n"
-            "💉 ฉีดวัคซีน         ฿300 – 600\n"
-            "🧪 เจาะเลือด (CBC)    ฿400 – 800\n"
-            "🔬 เพาะเชื้อ / Lab    ฿300 – 1,500\n"
-            "📷 เอ็กซเรย์          ฿500 – 1,500\n"
-            "🛁 อาบน้ำ-ตัดขน       ฿300 – 800\n"
-            "🏥 ค่า Admit (ต่อวัน) ฿500 – 2,000\n\n"
-            "ℹ️ ราคาอาจแตกต่างตามน้ำหนักและความซับซ้อน\n"
-            f"📞 โทรสอบถามเพิ่มเติม: {CLINIC_PHONE}"
+            "🩺 ค่าตรวจ (สัตวแพทย์)  ฿100\n"
+            "🧪 เจาะเลือด CBC         ฿200\n"
+            "🔬 เคมีเลือด             ฿150 / ค่า\n"
+            "📷 Ultrasound            ฿300\n"
+            "📷 X-ray                 ฿400\n"
+            "🏠 ฝากเลี้ยง             ฿200 / คืน\n\n"
+            "✂️ ทำหมัน — พิมพ์ 'ทำหมัน' เพื่อดูราคา\n"
+            "💉 วัคซีน  — พิมพ์ 'วัคซีน' เพื่อดูราคา\n"
+            "🦟 ยาเห็บหมัด — พิมพ์ 'เห็บ' เพื่อดูราคา\n\n"
+            f"📞 สอบถามเพิ่มเติม: {CLINIC_PHONE}"
         )
 
     elif intent == "appointment":
@@ -232,15 +365,17 @@ def build_response(intent: str, user_msg: str = "") -> str:
             "📅 นัดหมายกับ Dog and Cat Lovely\n"
             "━━━━━━━━━━━━━━━━━━\n"
             f"📌 สถานะวันนี้ ({thai_date_short()}): {appt_info}\n\n"
-            "วิธีนัดหมาย:\n"
-            f"📞 โทร {CLINIC_PHONE}\n"
+            "📞 สาขาราชวิถี:\n"
+            f"   โทร {CLINIC_PHONE}\n\n"
+            "📞 สาขาหลังม.ศิลปากร:\n"
+            f"   โทร {CLINIC_PHONE2}\n\n"
             f"💬 LINE OA: {CLINIC_LINE_OA}\n"
-            "🕐 รับนัดล่วงหน้าตั้งแต่ 08:00 น.\n\n"
+            f"   {CLINIC_LINE_URL}\n\n"
+            "⏰ รับโทรศัพท์ 08:30–20:30 น. ทุกวัน\n\n"
             "กรุณาแจ้ง:\n"
-            "• ชื่อเจ้าของและชื่อสัตว์เลี้ยง\n"
+            "• ชื่อเจ้าของและชื่อสัตว์\n"
             "• ประเภทสัตว์ (สุนัข/แมว/อื่นๆ)\n"
-            "• อาการเบื้องต้น\n"
-            "• วันและเวลาที่ต้องการ"
+            "• อาการเบื้องต้น"
         )
 
     elif intent == "check_appointment":
@@ -248,10 +383,11 @@ def build_response(intent: str, user_msg: str = "") -> str:
             "🔍 ตรวจสอบนัดหมาย\n"
             "━━━━━━━━━━━━━━━━━━\n"
             "กรุณาแจ้งข้อมูลใดข้อหนึ่ง:\n"
-            "• HN (หมายเลขผู้ป่วย) เช่น HN-690001-1\n"
+            "• HN (หมายเลขผู้ป่วย)\n"
             "• ชื่อสัตว์เลี้ยง + ชื่อเจ้าของ\n\n"
-            "หรือโทรตรวจสอบได้ที่:\n"
-            f"📞 {CLINIC_PHONE}"
+            "📞 โทรตรวจสอบ:\n"
+            f"   สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"   สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}"
         )
 
     elif intent == "pet_status":
@@ -260,58 +396,62 @@ def build_response(intent: str, user_msg: str = "") -> str:
             "━━━━━━━━━━━━━━━━━━\n"
             "กรุณาแจ้งข้อมูล:\n"
             "• HN (หมายเลขผู้ป่วย)\n"
-            "• ชื่อสัตว์\n\n"
+            "• ชื่อสัตว์เลี้ยง\n\n"
             "🔒 ข้อมูลสุขภาพเป็นความลับ\n"
             "เราจะยืนยันตัวตนก่อนให้ข้อมูลนะครับ\n\n"
-            f"📞 โทรสอบถามโดยตรง: {CLINIC_PHONE}\n"
-            "⏰ (ตลอดเวลาทำการ)"
+            f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}\n"
+            "⏰ 08:30–20:30 น. ทุกวัน"
         )
 
     elif intent == "vaccine":
         return (
-            "💉 บริการฉีดวัคซีน\n"
+            "💉 ราคาวัคซีน Dog and Cat Lovely\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "🐶 สุนัข:\n"
-            "  • วัคซีนรวม 7 / 9 โรค\n"
-            "  • พิษสุนัขบ้า\n"
-            "  • หัดสุนัข, ไข้หัด, ลำไส้อักเสบ\n\n"
+            "🐶 สุนัข (ลูกหมาปีแรก):\n"
+            "  • วัคซีนรวม 5 โรค  ฿250/เข็ม × 3 เข็ม\n"
+            "  • พิษสุนัขบ้า      ฿100/เข็ม\n"
+            "  • วัคซีนประจำปี    ฿350\n\n"
             "🐱 แมว:\n"
-            "  • วัคซีนรวม 3 / 4 โรค\n"
-            "  • พิษสุนัขบ้า\n"
-            "  • ไข้หัดแมว\n\n"
+            "  • ไข้หัดหวัด (FVRCP) ฿300/เข็ม × 3 เข็ม\n"
+            "  • พิษสุนัขบ้า       ฿100\n"
+            "  • ลิวคีเมีย (FeLV)   ฿400 × 2 เข็ม\n\n"
             "📋 กำหนดการฉีด:\n"
-            "  • ลูกสุนัข/แมว: เริ่มที่ 6-8 สัปดาห์\n"
+            "  • ลูกสุนัข/แมว เริ่มที่อายุ 6–8 สัปดาห์\n"
             "  • กระตุ้นทุกปี\n\n"
             f"📞 นัดฉีดวัคซีน: {CLINIC_PHONE}"
         )
 
     elif intent == "emergency":
         return (
-            "🚨 กรณีฉุกเฉิน\n"
+            "🚨 กรณีฉุกเฉิน — โทรด่วน!\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            f"📞 โทรทันที: {CLINIC_PHONE}\n\n"
+            f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}\n\n"
             "⚡ สัญญาณฉุกเฉินที่ต้องมาด่วน:\n"
             "• หายใจลำบาก / หอบ\n"
             "• ชัก / หมดสติ\n"
             "• เลือดออกมาก\n"
-            "• กินสารพิษ\n"
+            "• กินสารพิษหรือยา\n"
             "• ปัสสาวะไม่ออกนานกว่า 12 ชม.\n"
-            "• อาเจียน/ท้องเสียรุนแรง\n\n"
+            "• อาเจียน / ท้องเสียรุนแรง\n\n"
             "❗ อย่ารอ — มาโรงพยาบาลได้เลยครับ\n"
-            "🕐 รับฉุกเฉินตลอดเวลาทำการ"
+            "⏰ รับ 08:30–20:30 น. ทุกวัน"
         )
 
     elif intent == "location":
         return (
             "📍 ที่ตั้ง Dog and Cat Lovely\n"
             "━━━━━━━━━━━━━━━━━━\n"
-            "🏥 โรงพยาบาลสัตว์หมาแมวเลิฟลี่\n"
-            "📌 ที่อยู่: [ใส่ที่อยู่จริงที่นี่]\n"
-            "🗺️ Google Maps: [ใส่ลิงค์ Maps]\n\n"
-            "🚗 การเดินทาง:\n"
-            "  • [ใส่เส้นทางจาก BTS/MRT]\n"
-            "  • [ที่จอดรถ]\n\n"
-            f"📞 โทรสอบถามเส้นทาง: {CLINIC_PHONE}"
+            "🏥 สาขา 1 — ถนนราชวิถี\n"
+            "   139/6 ถ.ราชวิถีพระปฐมเจดีย์\n"
+            "   เมือง นครปฐม 73000\n"
+            f"   📞 {CLINIC_PHONE}\n"
+            f"   🗺️ {CLINIC_MAP1}\n\n"
+            "🏥 สาขา 2 — หลังมหาวิทยาลัยศิลปากร\n"
+            f"   📞 {CLINIC_PHONE2}\n"
+            f"   🗺️ {CLINIC_MAP2}\n\n"
+            "⏰ เปิดทุกวัน 08:30–20:30 น."
         )
 
     elif intent == "services":
@@ -320,15 +460,18 @@ def build_response(intent: str, user_msg: str = "") -> str:
             "━━━━━━━━━━━━━━━━━━\n"
             "🩺 ตรวจรักษาทั่วไป\n"
             "💉 ฉีดวัคซีน\n"
-            "🔬 ตรวจ Lab / เพาะเชื้อ\n"
+            "🔬 ตรวจ Lab / เจาะเลือด / CBC\n"
             "📷 เอ็กซเรย์ / อัลตราซาวด์\n"
             "🏥 Admit / ค้างคืน\n"
-            "✂️ ผ่าตัด\n"
-            "🛁 อาบน้ำ-ตัดขน\n"
-            "💊 ขายยา / Pet Shop\n"
-            "🦷 ทำฟัน / Dental\n"
+            "✂️ ผ่าตัด / ทำหมัน\n"
+            "🛁 อาบน้ำ-ตัดขน*\n"
+            "💊 จำหน่ายยา\n"
+            "🦟 ยากำจัดเห็บหมัด\n"
+            "🏠 ฝากเลี้ยง (฿200/คืน)\n"
             "📋 ตรวจสุขภาพประจำปี\n\n"
-            f"📞 สอบถามเพิ่มเติม: {CLINIC_PHONE}"
+            "* อาบน้ำแมว: สาขา 2 หลังม.ศิลปากร เท่านั้น\n\n"
+            f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}"
         )
 
     elif intent == "staff":
@@ -342,29 +485,38 @@ def build_response(intent: str, user_msg: str = "") -> str:
                 f"📞 นัดพบสัตวแพทย์: {CLINIC_PHONE}"
             )
         return (
-            "👩‍⚕️ ทีมสัตวแพทย์ผู้เชี่ยวชาญพร้อมดูแลสัตว์เลี้ยงของคุณ\n"
-            f"📞 สอบถามและนัดหมาย: {CLINIC_PHONE}"
+            "👩‍⚕️ ทีมสัตวแพทย์ผู้เชี่ยวชาญ\n"
+            "พร้อมดูแลสัตว์เลี้ยงของคุณด้วยความใส่ใจ 🐾\n\n"
+            f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}"
         )
 
     elif intent == "farewell":
         return (
             "😊 ขอบคุณที่ติดต่อมาครับ!\n"
-            "🐾 ดูแลน้องให้ดีนะครับ\n"
-            f"📞 มีอะไรสงสัยโทรหาได้เลย: {CLINIC_PHONE}\n"
-            "Dog and Cat Lovely 🏥"
+            "🐾 ดูแลน้องให้ดีนะครับ\n\n"
+            f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}\n"
+            f"💬 LINE: {CLINIC_LINE_OA}\n\n"
+            "🏥 Dog and Cat Lovely Pet Hospital"
         )
 
     else:  # unknown
         return (
             "🤔 ขออภัยครับ ไม่แน่ใจว่าต้องการสอบถามเรื่องอะไร\n\n"
             "ลองพิมพ์คำเหล่านี้ได้ครับ:\n"
-            "• \"เวลาเปิด\"\n"
-            "• \"ราคาค่าตรวจ\"\n"
-            "• \"ขอนัดหมาย\"\n"
-            "• \"บริการมีอะไรบ้าง\"\n"
-            "• \"ฉุกเฉิน\"\n\n"
-            f"หรือโทรคุยกับเจ้าหน้าที่: {CLINIC_PHONE}\n"
-            "⏰ (ตามเวลาทำการ)"
+            "• \"เวลาเปิด\" — เวลาทำการ\n"
+            "• \"ราคา\" — ค่าบริการทั่วไป\n"
+            "• \"ทำหมัน\" — ราคาทำหมัน\n"
+            "• \"วัคซีน\" — ราคาวัคซีน\n"
+            "• \"เห็บ\" — ยากำจัดเห็บหมัด\n"
+            "• \"ฝากเลี้ยง\" — บริการฝากสัตว์\n"
+            "• \"ที่ตั้ง\" — แผนที่และเส้นทาง\n"
+            "• \"นัดหมาย\" — จองคิว\n"
+            "• \"ฉุกเฉิน\" — โทรด่วน\n\n"
+            f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
+            f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}\n"
+            "⏰ 08:30–20:30 น. ทุกวัน"
         )
 
 
@@ -372,10 +524,10 @@ def build_response(intent: str, user_msg: str = "") -> str:
 #  LINE FLEX MESSAGE (สำหรับตอบกลับสวยงาม)
 # ──────────────────────────────────────────────
 def build_flex_greeting() -> dict:
-    """Flex Message หน้าแรก — แสดงเมนูหลัก"""
+    """Flex Message หน้าแรก — แสดงข้อความต้อนรับและเมนูหลัก"""
     return {
         "type": "flex",
-        "altText": "🐾 ยินดีต้อนรับสู่ Dog and Cat Lovely",
+        "altText": "สวัสดีค่ะ รพส.หมาแมวเลิฟลี่ ยินดีให้บริการค่ะ",
         "contents": {
             "type": "bubble",
             "size": "mega",
@@ -385,10 +537,12 @@ def build_flex_greeting() -> dict:
                 "backgroundColor": "#FF8C00",
                 "paddingAll": "20px",
                 "contents": [
-                    {"type": "text", "text": "🐾 Dog and Cat Lovely",
+                    {"type": "text", "text": "🐾 รพส.หมาแมวเลิฟลี่",
                      "color": "#FFFFFF", "size": "xl", "weight": "bold"},
-                    {"type": "text", "text": "Pet Hospital — ยินดีต้อนรับครับ",
+                    {"type": "text", "text": "ยินดีให้บริการค่ะ",
                      "color": "#FFE0B2", "size": "sm"},
+                    {"type": "text", "text": "⏰ เปิดทุกวัน 8:30–20:30 น.",
+                     "color": "#FFFFFF", "size": "sm", "margin": "md", "weight": "bold"},
                 ]
             },
             "body": {
@@ -396,28 +550,52 @@ def build_flex_greeting() -> dict:
                 "layout": "vertical",
                 "spacing": "sm",
                 "contents": [
-                    {"type": "text", "text": "เราช่วยอะไรได้บ้างครับ?",
-                     "weight": "bold", "size": "md", "margin": "md"},
+                    {"type": "text", "text": "📞 ติดต่อสาขา",
+                     "weight": "bold", "size": "md", "color": "#FF8C00"},
+                    {"type": "text", "text": f"สาขาถนนราชวิถี: {CLINIC_PHONE}",
+                     "size": "sm", "wrap": True},
+                    {"type": "text", "text": f"สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}",
+                     "size": "sm", "wrap": True},
                     {"type": "separator", "margin": "md"},
-                    _menu_row("🕐", "เวลาทำการ",     "เวลาเปิด-ปิด วันหยุด"),
-                    _menu_row("💰", "ราคาค่าบริการ", "ค่าตรวจ ค่าวัคซีน"),
+                    {"type": "text", "text": "ต้องการสอบถามเรื่องอะไรเพิ่มเติมคะ 😊",
+                     "weight": "bold", "size": "sm", "margin": "md", "wrap": True},
+                    _menu_row("🕐", "เวลาทำการ",     "8:30–20:30 น. ทุกวัน"),
+                    _menu_row("💰", "ราคาค่าบริการ", "ตรวจ ทำหมัน วัคซีน เห็บหมัด"),
                     _menu_row("📅", "นัดหมาย",       "จองคิว ตรวจสอบนัด"),
-                    _menu_row("🏥", "บริการ",        "ตรวจ รักษา ผ่าตัด"),
-                    _menu_row("📍", "ที่ตั้ง",        "แผนที่ การเดินทาง"),
-                    _menu_row("🚨", "ฉุกเฉิน",       "โทรด่วนทันที"),
+                    _menu_row("🏠", "ฝากเลี้ยง",     "฿200 / คืน"),
+                    _menu_row("📍", "ที่ตั้ง 2 สาขา", "แผนที่ Google Maps"),
+                    _menu_row("🚨", "ฉุกเฉิน",       "โทรด่วน 24 ชม."),
                 ]
             },
             "footer": {
                 "type": "box",
                 "layout": "vertical",
+                "spacing": "sm",
                 "contents": [
                     {
                         "type": "button",
-                        "action": {"type": "uri", "label": f"📞 โทร {CLINIC_PHONE}",
-                                   "uri": f"tel:{CLINIC_PHONE.replace('-','')}"},
+                        "action": {"type": "uri",
+                                   "label": "📍 แผนที่ สาขาราชวิถี",
+                                   "uri": CLINIC_MAP1},
                         "color": "#FF8C00",
                         "style": "primary",
-                    }
+                    },
+                    {
+                        "type": "button",
+                        "action": {"type": "uri",
+                                   "label": "📍 แผนที่ สาขาหลังม.ศิลปากร",
+                                   "uri": CLINIC_MAP2},
+                        "color": "#FF6B00",
+                        "style": "primary",
+                    },
+                    {
+                        "type": "button",
+                        "action": {"type": "uri",
+                                   "label": f"📞 โทรสาขาราชวิถี",
+                                   "uri": f"tel:{CLINIC_PHONE.replace('-','')}"},
+                        "color": "#22c55e",
+                        "style": "primary",
+                    },
                 ]
             }
         }
@@ -488,7 +666,7 @@ FB_SEND_URL = "https://graph.facebook.com/v18.0/me/messages"
 
 
 def fb_send_message(recipient_id: str, text: str):
-    """ส่งข้อความกลับไปยัง FB Messenger"""
+    """ส่งข้อความ text กลับไปยัง FB Messenger"""
     params  = {"access_token": FB_PAGE_ACCESS_TOKEN}
     payload = {
         "recipient": {"id": recipient_id},
@@ -499,22 +677,351 @@ def fb_send_message(recipient_id: str, text: str):
         log.warning(f"FB reply failed: {r.status_code} {r.text[:200]}")
 
 
+def fb_send_image(recipient_id: str, image_url: str):
+    """ส่งรูปไปยัง FB Messenger"""
+    params  = {"access_token": FB_PAGE_ACCESS_TOKEN}
+    payload = {
+        "recipient": {"id": recipient_id},
+        "message": {
+            "attachment": {
+                "type": "image",
+                "payload": {"url": image_url, "is_reusable": True},
+            }
+        },
+    }
+    r = req.post(FB_SEND_URL, params=params, json=payload, timeout=15)
+    if r.status_code != 200:
+        log.warning(f"FB image send failed: {r.status_code} {r.text[:200]}")
+
+
+def fb_send_reply(recipient_id: str, reply: dict):
+    """ส่งทั้งรูปและข้อความตามลำดับ (รูปก่อน แล้วข้อความ)"""
+    for img_url in reply.get("images", []):
+        fb_send_image(recipient_id, img_url)
+    if reply.get("text"):
+        fb_send_message(recipient_id, reply["text"])
+
+
+def line_reply_with_images(reply_token: str, reply: dict):
+    """ส่ง LINE: รูป (image messages) + ข้อความ (text message) ในครั้งเดียว
+    LINE จำกัด 5 messages ต่อ reply"""
+    msgs = []
+    for img_url in reply.get("images", [])[:4]:  # max 4 รูป เพื่อให้เหลือ slot ให้ text
+        msgs.append({
+            "type": "image",
+            "originalContentUrl": img_url,
+            "previewImageUrl":    img_url,
+        })
+    if reply.get("text"):
+        msgs.append({
+            "type": "text",
+            "text": reply["text"],
+            "quickReply": {"items": quick_replies()},
+        })
+    if msgs:
+        line_reply(reply_token, msgs)
+
+
 # ──────────────────────────────────────────────
 #  QUICK REPLIES (LINE)
 # ──────────────────────────────────────────────
 def quick_replies() -> list:
-    """Quick reply buttons สำหรับ LINE"""
+    """Quick reply buttons สำหรับ LINE (max 13 items)"""
     items = [
         ("🕐 เวลาเปิด",    "เวลาเปิด"),
-        ("💰 ราคา",        "ราคาค่าตรวจ"),
+        ("📅 จองคิว",      "จองคิว"),
+        ("✂️ ทำหมัน",      "ทำหมัน"),
+        ("💉 วัคซีน",      "วัคซีน"),
+        ("🦟 ยาเห็บ",      "ยากำจัดเห็บหมัด"),
+        ("🏠 ฝากเลี้ยง",   "ฝากเลี้ยง"),
         ("📅 นัดหมาย",     "ขอนัดหมาย"),
-        ("📍 ที่ตั้ง",      "ที่ตั้ง"),
+        ("📍 ที่ตั้ง",      "ที่ตั้งสาขา"),
         ("🚨 ฉุกเฉิน",     "ฉุกเฉิน"),
     ]
     return [
         {"type": "action", "action": {"type": "message", "label": label, "text": text}}
         for label, text in items
     ]
+
+
+# ──────────────────────────────────────────────
+#  Q&A FLOW — Session state + multi-step
+# ──────────────────────────────────────────────
+_user_sessions: dict = {}
+
+# ข้อความ header ที่แสดงก่อนทุก menu/response
+BOT_INTRO_LINE = "สวัสดีค่ะ Lovely bot ขออนุญาตช่วยตอบคำถามเพื่อความรวดเร็วนะคะ 🐾"
+BOT_INTRO_FB   = "รพส.หมาแมวเลิฟลี่ ยินดีให้บริการค่ะ"
+
+def get_intro(platform: str = "line") -> str:
+    """FB ใช้ intro text, LINE ไม่มี (มี OA greeting อยู่แล้ว)"""
+    return BOT_INTRO_FB if platform == "fb" else ""
+
+CONTACT_STAFF_MSG = (
+    "🙇‍♀️ ขออภัยค่ะ คำถามนี้ขอติดต่อพนักงานให้นะคะ\n"
+    "กรุณาโทร:\n"
+    "📞 สาขาราชวิถี: 080-4288181\n"
+    "📞 สาขาหลังม.ศิลปากร: 090-1556446\n"
+    "⏰ รับโทรศัพท์ 8.30-20.30 น. ทุกวัน\n\n"
+    "🤖 บอทขอหยุดตอบกลับชั่วคราว เจ้าหน้าที่จะติดต่อกลับโดยเร็วค่ะ"
+)
+
+NO_MATCH_MSG = (
+    "🤔 ขออภัยค่ะ ไม่พบข้อมูลที่ตรงกับคำถามค่ะ\n\n"
+    "ขอติดต่อพนักงานให้นะคะ:\n"
+    "📞 สาขาราชวิถี: 080-4288181\n"
+    "📞 สาขาหลังม.ศิลปากร: 090-1556446"
+)
+
+
+# ──────────────────────────────────────────────
+#  HIERARCHICAL MENU TREE
+# ──────────────────────────────────────────────
+# item keys:
+#   "label"  : ข้อความแสดงในเมนู
+#   "next"   : menu_key ของ submenu ถัดไป
+#   "qa_id"  : id ใน QA_LIST → แสดงคำตอบเลย
+MENU_TREE: dict = {
+
+    # ── ทำหมัน (root) ────────────────────────────
+    "neuter_root": {
+        "title": "ทำหมัน — เลือกประเภท",
+        "items": [
+            {"label": "🐶 ทำหมันสุนัขเพศผู้",  "next": "neuter_dog_weight"},
+            {"label": "🐶 ทำหมันสุนัขเพศเมีย", "next": "neuter_dog_weight"},
+            {"label": "🐱 ทำหมันแมวเพศผู้",    "next": "neuter_cat_male"},
+            {"label": "🐱 ทำหมันแมวเพศเมีย",   "next": "neuter_cat_female"},
+        ],
+    },
+
+    # ── ทำหมันสุนัข (เลือกน้ำหนัก) ─────────────
+    "neuter_dog_weight": {
+        "title": "ทำหมันสุนัข — เลือกน้ำหนัก",
+        "items": [
+            {"label": "⚖️ น้ำหนักไม่ถึง 10 กก.",  "qa_id": 46},
+            {"label": "⚖️ น้ำหนัก 10-20 กก.",     "qa_id": 47},
+            {"label": "⚖️ น้ำหนัก 20-30 กก.",     "qa_id": 45},
+            {"label": "⚖️ น้ำหนัก 30-40 กก.",     "qa_id": 29},
+        ],
+    },
+
+    # ── ทำหมันแมวเพศผู้ (เลือกแพ็กเกจ) ─────────
+    "neuter_cat_male": {
+        "title": "ทำหมันแมวเพศผู้ — เลือกแพ็กเกจ",
+        "items": [
+            {"label": "🏠 รับกลับบ้านได้เลย",          "qa_id": 18},
+            {"label": "🏥 ฝากข้ามคืน (จนตัดไหม)",      "qa_id": 16},
+        ],
+    },
+
+    # ── ทำหมันแมวเพศเมีย (เลือกแพ็กเกจ) ────────
+    "neuter_cat_female": {
+        "title": "ทำหมันแมวเพศเมีย — เลือกแพ็กเกจ",
+        "items": [
+            {"label": "🏠 รับกลับบ้านได้เลย",          "qa_id": 14},
+            {"label": "🏥 ฝากข้ามคืน (จนตัดไหม)",      "qa_id": 13},
+        ],
+    },
+}
+
+
+def detect_menu_trigger(text: str) -> str | None:
+    """
+    ตรวจว่า user text ควร trigger menu tree ไหน
+    คืน menu_key หรือ None (= ใช้ keyword search ปกติ)
+    ลำดับสำคัญ: เฉพาะเจาะจงก่อน → generic ทีหลัง
+    """
+    # สุนัข + เพศผู้
+    if re.search(r"ทำหมัน.*(สุนัข|หมา).*(เพศผู้|ตัวผู้)", text):
+        return "neuter_dog_weight"
+    # สุนัข + เพศเมีย
+    if re.search(r"ทำหมัน.*(สุนัข|หมา).*(เพศเมีย|ตัวเมีย)", text):
+        return "neuter_dog_weight"
+    # แมว + เพศผู้
+    if re.search(r"ทำหมัน.*แมว.*(เพศผู้|ตัวผู้)|ทำหมัน.*(เพศผู้|ตัวผู้).*แมว", text):
+        return "neuter_cat_male"
+    # แมว + เพศเมีย
+    if re.search(r"ทำหมัน.*แมว.*(เพศเมีย|ตัวเมีย)|ทำหมัน.*(เพศเมีย|ตัวเมีย).*แมว", text):
+        return "neuter_cat_female"
+    # generic "ทำหมัน" / "ผ่าหมัน" — ไม่มีน้ำหนักระบุ
+    if re.search(r"ทำหมัน|ผ่าหมัน", text):
+        if not re.search(r"กก|กิโล|\d+\s*[-–]\s*\d+", text):   # ไม่มีน้ำหนัก
+            return "neuter_root"
+    return None
+
+
+def build_menu_message(menu_key: str, platform: str = "line") -> str:
+    """สร้างข้อความเมนู hierarchical"""
+    node  = MENU_TREE[menu_key]
+    intro = get_intro(platform)
+    lines = []
+    if intro:
+        lines.append(f"{intro}\n")
+    lines.append(f"📋 {node['title']}\n")
+    for i, item in enumerate(node["items"], start=1):
+        lines.append(f"{i}. {item['label']}")
+    lines.append(f"\n{len(node['items'])+1}. ❌ ไม่ใช่ทุกข้อ ขอติดต่อพนักงาน")
+    lines.append("\n💡 พิมพ์เลขข้อที่ต้องการค่ะ")
+    return "\n".join(lines)
+
+
+def get_session(user_id: str) -> dict:
+    if user_id not in _user_sessions:
+        _user_sessions[user_id] = {
+            "candidates": [],
+            "handed_off": False,
+            "menu_node":  None,   # menu tree node ที่ user อยู่
+        }
+    return _user_sessions[user_id]
+
+
+def reset_session(user_id: str):
+    _user_sessions[user_id] = {
+        "candidates": [],
+        "handed_off": False,
+        "menu_node":  None,
+    }
+
+
+def build_candidates_message(candidates: list, platform: str = "line") -> str:
+    """สร้างข้อความให้ user เลือก — แสดง label สั้นๆ แทนคำถามเต็ม"""
+    intro = get_intro(platform)
+    lines = []
+    if intro:
+        lines.append(f"{intro}\n")
+    lines.append("📋 ลูกค้าต้องการสอบถามบริการด้านไหนค่ะ\n")
+    for i, item in enumerate(candidates, start=1):
+        label = item.get("label") or item["question"]
+        lines.append(f"{i}. {label}")
+    lines.append(f"\n{len(candidates)+1}. ❌ ไม่ใช่ทุกข้อ ขอติดต่อพนักงาน")
+    lines.append("\n💡 พิมพ์เลขข้อ เพื่อสอบถามรายละเอียดค่ะ")
+    return "\n".join(lines)
+
+
+def build_single_confirm_message(qa_item: dict) -> str:
+    """ถ้าเจอข้อเดียว ขอ confirm — ใช้ label สั้นๆ"""
+    label = qa_item.get("label") or qa_item["question"]
+    return (
+        f"❓ คุณต้องการสอบถามเรื่องนี้ใช่มั้ยคะ?\n\n"
+        f"▶ {label}\n\n"
+        f"💡 พิมพ์ \"ใช่\" เพื่อดูคำตอบ\n"
+        f"    หรือพิมพ์ \"ไม่ใช่\" เพื่อติดต่อพนักงาน"
+    )
+
+
+def build_answer_reply(qa_item: dict) -> dict:
+    """สร้าง reply dict {text, images} สำหรับคำตอบ"""
+    return {
+        "text":   qa_item["answer"] + FOOTER,
+        "images": [absolute_image_url(p) for p in qa_item.get("images", [])],
+    }
+
+
+def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
+    """
+    Main Q&A flow handler — return dict {text, images} หรือ None ถ้าไม่ตอบ
+    platform: "line" | "fb"
+    Flow:
+      1. greeting → reset + ตอบ
+      2. menu_node active → navigate menu tree
+      3. detect menu trigger → เปิด menu tree
+      4. candidates active → เลือกข้อ / ยืนยัน
+      5. keyword search → หา candidates หรือ handoff
+    """
+    sess = get_session(user_id)
+
+    # ── 0. handed_off → ไม่ตอบ ──
+    if sess.get("handed_off"):
+        log.info(f"[{user_id}] handed off — skip")
+        return None
+
+    # ── 1. Greeting → reset ──
+    intent = detect_intent(user_text)
+    if intent == "greeting":
+        reset_session(user_id)
+        return {"text": GREETING_TEXT, "images": []}
+
+    # ── 2. Menu tree navigation ──
+    if sess.get("menu_node"):
+        menu_key = sess["menu_node"]
+        node     = MENU_TREE.get(menu_key)
+        if node:
+            choice = qa.parse_choice_number(user_text)
+            if choice is not None:
+                n = len(node["items"])
+                if 1 <= choice <= n:
+                    item = node["items"][choice - 1]
+                    if "next" in item:
+                        # ไปยัง submenu ถัดไป
+                        next_key = item["next"]
+                        sess["menu_node"] = next_key
+                        log.info(f"[{user_id}] menu → {next_key}")
+                        return {"text": build_menu_message(next_key, platform), "images": []}
+                    elif "qa_id" in item:
+                        # แสดงคำตอบ
+                        qa_obj = qa.find_by_id(item["qa_id"])
+                        reset_session(user_id)
+                        log.info(f"[{user_id}] menu answer qa_id={item['qa_id']}")
+                        if qa_obj:
+                            return build_answer_reply(qa_obj)
+                        return {"text": NO_MATCH_MSG, "images": []}
+                elif choice == n + 1:
+                    # ติดต่อพนักงาน
+                    reset_session(user_id)
+                    sess["handed_off"] = True
+                    return {"text": CONTACT_STAFF_MSG, "images": []}
+                else:
+                    return {"text": f"กรุณาเลือกเลข 1-{n+1} ค่ะ", "images": []}
+            # ไม่ใช่ตัวเลข → reset menu แล้ว fall-through หาคำถามใหม่
+            sess["menu_node"] = None
+
+    # ── 3. Menu trigger detection ──
+    menu_key = detect_menu_trigger(user_text)
+    if menu_key:
+        sess["menu_node"]  = menu_key
+        sess["candidates"] = []
+        log.info(f"[{user_id}] menu trigger → {menu_key}")
+        return {"text": build_menu_message(menu_key, platform), "images": []}
+
+    # ── 4. Candidates (regular QA flow) ──
+    if sess["candidates"]:
+        choice = qa.parse_choice_number(user_text)
+        if choice is not None:
+            if 1 <= choice <= len(sess["candidates"]):
+                qa_obj = sess["candidates"][choice - 1]
+                reset_session(user_id)
+                return build_answer_reply(qa_obj)
+            elif choice == len(sess["candidates"]) + 1:
+                sess["candidates"] = []
+                sess["handed_off"] = True
+                return {"text": CONTACT_STAFF_MSG, "images": []}
+            else:
+                return {"text": f"ขออภัยค่ะ เลือกเลข 1-{len(sess['candidates'])+1} นะคะ", "images": []}
+
+        if qa.is_affirmative(user_text):
+            qa_obj = sess["candidates"][0]
+            reset_session(user_id)
+            return build_answer_reply(qa_obj)
+
+        if qa.is_negative(user_text):
+            sess["candidates"] = []
+            sess["handed_off"] = True
+            return {"text": CONTACT_STAFF_MSG, "images": []}
+        # ตอบนอกเหนือ → fall through ค้นใหม่
+        sess["candidates"] = []
+
+    # ── 5. Keyword search ──
+    candidates = qa.find_candidates(user_text, top_k=4)
+    if not candidates:
+        sess["handed_off"] = True
+        return {"text": NO_MATCH_MSG, "images": []}
+
+    if len(candidates) == 1:
+        sess["candidates"] = candidates
+        return {"text": build_single_confirm_message(candidates[0]), "images": []}
+
+    sess["candidates"] = candidates
+    return {"text": build_candidates_message(candidates, platform), "images": []}
 
 
 # ──────────────────────────────────────────────
@@ -544,28 +1051,18 @@ def handle_line_event(event: dict):
         msg_type = event.get("message", {}).get("type")
         if msg_type == "text":
             user_text = event.get("message", {}).get("text", "").strip()
-            log.info(f"LINE msg: {user_text!r}")
+            user_id   = (event.get("source") or {}).get("userId", "anonymous")
+            log.info(f"LINE msg from {user_id}: {user_text!r}")
 
-            intent = detect_intent(user_text)
-            log.info(f"Intent: {intent}")
-
-            if intent == "greeting":
-                # ส่ง Flex Message สำหรับทักทาย
-                flex = build_flex_greeting()
-                line_reply_flex(reply_token, flex)
-            else:
-                response = build_response(intent, user_text)
-                # ส่งพร้อม quick replies
-                msgs = [{
-                    "type": "text",
-                    "text": response,
-                    "quickReply": {"items": quick_replies()},
-                }]
-                line_reply(reply_token, msgs)
+            # ผ่าน Q&A flow
+            reply = handle_qa_flow(user_id, user_text)
+            if reply is None:
+                log.info(f"[{user_id}] bot silent (handed off)")
+                return  # หยุดตอบกลับ
+            line_reply_with_images(reply_token, reply)
 
     elif event_type == "follow":
-        # ผู้ใช้ติดตาม LINE OA ใหม่
-        welcome = build_response("greeting")
+        # ผู้ใช้ติดตาม LINE OA ใหม่ — ส่ง Flex greeting
         flex = build_flex_greeting()
         line_reply_flex(reply_token, flex)
 
@@ -617,14 +1114,19 @@ def handle_fb_event(event: dict):
         user_text = msg.get("text", "").strip()
         log.info(f"FB msg from {sender_id}: {user_text!r}")
 
-        intent = detect_intent(user_text)
-        response = build_response(intent, user_text)
-        fb_send_message(sender_id, response)
+        # ผ่าน Q&A flow
+        reply = handle_qa_flow(sender_id, user_text, platform="fb")
+        if reply is None:
+            log.info(f"[FB:{sender_id}] bot silent (handed off)")
+            return  # หยุดตอบกลับ
+        fb_send_reply(sender_id, reply)
 
     elif "postback" in event:
         payload = event["postback"].get("payload", "")
         log.info(f"FB postback: {payload}")
-        fb_send_message(sender_id, build_response("greeting"))
+        reset_session(sender_id)  # reset เพื่อเริ่มใหม่
+        reply = {"text": GREETING_TEXT, "images": []}
+        fb_send_reply(sender_id, reply)
 
 
 # ──────────────────────────────────────────────
@@ -659,30 +1161,74 @@ def test_response(intent: str):
     })
 
 
+@app.route("/test_detect", methods=["GET"])
+def test_detect():
+    """ทดสอบการตรวจ intent จากข้อความ"""
+    msg = request.args.get("msg", "")
+    intent = detect_intent(msg)
+    return jsonify({
+        "message": msg,
+        "intent":  intent,
+        "reply":   build_response(intent, msg),
+    })
+
+
+@app.route("/test_qa", methods=["GET"])
+def test_qa():
+    """ทดสอบ Q&A flow"""
+    msg      = request.args.get("msg", "")
+    user_id  = request.args.get("user", "tester")
+    platform = request.args.get("platform", "line")
+    reply    = handle_qa_flow(user_id, msg, platform=platform)
+    sess     = _user_sessions.get(user_id, {})
+    return jsonify({
+        "message":   msg,
+        "user":      user_id,
+        "reply":     reply,
+        "session":   {
+            "candidate_ids": [c["id"] for c in sess.get("candidates", [])],
+            "handed_off":    sess.get("handed_off", False),
+        },
+    })
+
+
+@app.route("/test_reset", methods=["GET"])
+def test_reset():
+    """รีเซ็ต session ของ user"""
+    user_id = request.args.get("user", "tester")
+    reset_session(user_id)
+    return jsonify({"status": "reset", "user": user_id})
+
+
 # ──────────────────────────────────────────────
 #  MAIN
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
 
     print("=" * 50)
-    print("  🐾 Dog and Cat Lovely Chatbot Server")
+    print("  [*] Dog and Cat Lovely Chatbot Server")
     print("=" * 50)
-    print(f"  LINE Token : {'✅ ตั้งค่าแล้ว' if LINE_CHANNEL_ACCESS_TOKEN != 'YOUR_LINE_CHANNEL_ACCESS_TOKEN' else '⚠️  ยังไม่ตั้งค่า'}")
-    print(f"  FB Token   : {'✅ ตั้งค่าแล้ว' if FB_PAGE_ACCESS_TOKEN != 'YOUR_FB_PAGE_ACCESS_TOKEN' else '⚠️  ยังไม่ตั้งค่า'}")
+    print(f"  LINE Token : {'[OK]' if LINE_CHANNEL_ACCESS_TOKEN else '[MISSING]'}")
+    print(f"  FB Token   : {'[OK]' if FB_PAGE_ACCESS_TOKEN else '[MISSING]'}")
     print()
     print("  Endpoints:")
-    print("    GET  /                  → status")
-    print("    POST /webhook/line      → LINE webhook")
-    print("    GET  /webhook/fb        → FB verification")
-    print("    POST /webhook/fb        → FB messages")
-    print("    GET  /test/<intent>     → test response")
+    print("    GET  /                  -> status")
+    print("    POST /webhook/line      -> LINE webhook")
+    print("    GET  /webhook/fb        -> FB verification")
+    print("    POST /webhook/fb        -> FB messages")
+    print("    GET  /test/<intent>     -> test response")
     print()
     print("  Test intents: greeting, hours, price, appointment,")
-    print("                vaccine, emergency, location, services")
+    print("                neuter, flea, boarding, vaccine,")
+    print("                emergency, location, services")
     print()
-    print(f"  🌐 http://0.0.0.0:{port}")
+    print(f"  http://0.0.0.0:{port}")
     print("=" * 50)
 
     app.run(host="0.0.0.0", port=port, debug=debug_mode)
