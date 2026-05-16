@@ -1023,7 +1023,30 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         # ตอบนอกเหนือ → fall through ค้นใหม่
         sess["candidates"] = []
 
-    # ── 5. Keyword search ──
+    # ── 5. AI Agent matching ──
+    try:
+        import ai_agent
+        ai_result = ai_agent.match_qa(user_text, qa.QA_LIST)
+    except Exception as e:
+        log.warning(f"[{user_id}] AI agent error: {e}")
+        ai_result = None
+
+    if ai_result and ai_result["confidence"] in ("high", "medium"):
+        qa_id      = ai_result["qa_id"]
+        ai_answer  = ai_result["answer"]
+        qa_obj     = qa.find_by_id(qa_id) if qa_id else None
+        log.info(f"[{user_id}] AI matched qa_id={qa_id} conf={ai_result['confidence']}")
+
+        if qa_obj:
+            # ใช้คำตอบจาก AI (ปรับสำนวนแล้ว) + รูปจาก Excel
+            reset_session(user_id)
+            answer_text = ai_answer if ai_answer else qa_obj["answer"]
+            return {
+                "text":   answer_text + FOOTER,
+                "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
+            }
+
+    # ── 6. Fallback: Keyword search (ถ้า AI ไม่ทำงาน หรือ low confidence) ──
     candidates = qa.find_candidates(user_text, top_k=4)
     if not candidates:
         sess["handed_off"] = True

@@ -30,6 +30,13 @@ import requests
 from datetime import datetime
 from pathlib import Path
 
+# โหลด .env ถ้ามี (local dev)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 # แก้ปัญหา emoji encoding ใน Windows terminal
 if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
