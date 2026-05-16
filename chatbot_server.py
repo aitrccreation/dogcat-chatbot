@@ -988,7 +988,29 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
             # ไม่ใช่ตัวเลข → reset menu แล้ว fall-through หาคำถามใหม่
             sess["menu_node"] = None
 
-    # ── 3. Menu trigger detection ──
+    # ── 3. AI Agent matching (ลำดับแรก — เพื่อให้ AI ตอบคำถามภาษาธรรมชาติได้) ──
+    try:
+        import ai_agent
+        ai_result = ai_agent.match_qa(user_text, qa.QA_LIST)
+    except Exception as e:
+        log.warning(f"[{user_id}] AI agent error: {e}")
+        ai_result = None
+
+    if ai_result and ai_result["confidence"] == "high":
+        qa_id     = ai_result["qa_id"]
+        ai_answer = ai_result["answer"]
+        qa_obj    = qa.find_by_id(qa_id) if qa_id else None
+        log.info(f"[{user_id}] AI matched qa_id={qa_id} conf=high")
+
+        if qa_obj:
+            reset_session(user_id)
+            answer_text = ai_answer if ai_answer else qa_obj["answer"]
+            return {
+                "text":   answer_text + FOOTER,
+                "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
+            }
+
+    # ── 4. Menu trigger detection (สำหรับคำสั้นๆ เช่น "ทำหมัน", "วัคซีน") ──
     menu_key = detect_menu_trigger(user_text)
     if menu_key:
         sess["menu_node"]  = menu_key
@@ -996,7 +1018,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         log.info(f"[{user_id}] menu trigger → {menu_key}")
         return {"text": build_menu_message(menu_key, platform), "images": []}
 
-    # ── 4. Candidates (regular QA flow) ──
+    # ── 5. Candidates (regular QA flow) ──
     if sess["candidates"]:
         choice = qa.parse_choice_number(user_text)
         if choice is not None:
@@ -1023,22 +1045,14 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         # ตอบนอกเหนือ → fall through ค้นใหม่
         sess["candidates"] = []
 
-    # ── 5. AI Agent matching ──
-    try:
-        import ai_agent
-        ai_result = ai_agent.match_qa(user_text, qa.QA_LIST)
-    except Exception as e:
-        log.warning(f"[{user_id}] AI agent error: {e}")
-        ai_result = None
-
-    if ai_result and ai_result["confidence"] in ("high", "medium"):
-        qa_id      = ai_result["qa_id"]
-        ai_answer  = ai_result["answer"]
-        qa_obj     = qa.find_by_id(qa_id) if qa_id else None
-        log.info(f"[{user_id}] AI matched qa_id={qa_id} conf={ai_result['confidence']}")
+    # ── 6. AI Agent fallback (medium confidence — รองรับเคสที่ menu/candidates ไม่เจอ) ──
+    if ai_result and ai_result["confidence"] == "medium":
+        qa_id     = ai_result["qa_id"]
+        ai_answer = ai_result["answer"]
+        qa_obj    = qa.find_by_id(qa_id) if qa_id else None
+        log.info(f"[{user_id}] AI matched qa_id={qa_id} conf=medium (fallback)")
 
         if qa_obj:
-            # ใช้คำตอบจาก AI (ปรับสำนวนแล้ว) + รูปจาก Excel
             reset_session(user_id)
             answer_text = ai_answer if ai_answer else qa_obj["answer"]
             return {
@@ -1046,7 +1060,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                 "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
             }
 
-    # ── 6. Fallback: Keyword search (ถ้า AI ไม่ทำงาน หรือ low confidence) ──
+    # ── 7. Last-resort: Keyword search ──
     candidates = qa.find_candidates(user_text, top_k=4)
     if not candidates:
         sess["handed_off"] = True
