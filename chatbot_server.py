@@ -1183,6 +1183,20 @@ def debug_env():
     })
 
 
+@app.route("/debug_qa", methods=["GET"])
+def debug_qa():
+    """ตรวจสอบ QA list ที่โหลดได้"""
+    qa_id = request.args.get("id", type=int)
+    if qa_id:
+        item = qa.find_by_id(qa_id)
+        return jsonify({"qa_id": qa_id, "found": item is not None,
+                        "label": item["label"] if item else None,
+                        "answer_len": len(item["answer"]) if item else 0,
+                        "images": item["images"] if item else []})
+    return jsonify({"total_qa": len(qa.QA_LIST),
+                    "ids": [q["id"] for q in qa.QA_LIST]})
+
+
 @app.route("/test_detect", methods=["GET"])
 def test_detect():
     """ทดสอบการตรวจ intent จากข้อความ"""
