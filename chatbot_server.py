@@ -246,12 +246,14 @@ GREETING_TEXT = (
 
 
 def absolute_image_url(rel_path: str) -> str:
-    """แปลง /static/images/xxx.jpg -> https://host.com/static/images/xxx.jpg"""
+    """แปลง /static/images/xxx.jpg -> https://host.com/static/images/xxx.jpg
+    พร้อม URL-encode ชื่อไฟล์ภาษาไทย เพื่อให้ LINE API ยอมรับ"""
+    from urllib.parse import quote
     if rel_path.startswith("http"):
         return rel_path
-    if rel_path.startswith("/"):
-        return PUBLIC_BASE_URL + rel_path
-    return PUBLIC_BASE_URL + "/" + rel_path
+    # encode เฉพาะชื่อไฟล์ภาษาไทย (ไม่ encode /)
+    encoded = "/".join(quote(part, safe="") for part in rel_path.split("/"))
+    return PUBLIC_BASE_URL + encoded
 
 
 def build_response(intent: str, user_msg: str = ""):
