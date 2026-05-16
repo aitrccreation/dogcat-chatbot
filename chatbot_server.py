@@ -1161,6 +1161,26 @@ def test_response(intent: str):
     })
 
 
+@app.route("/debug_env", methods=["GET"])
+def debug_env():
+    """ตรวจ env vars ที่โหลดอยู่ (token prefix เท่านั้น ไม่แสดงค่าเต็ม)"""
+    import requests as _req
+    token = LINE_CHANNEL_ACCESS_TOKEN
+    secret = LINE_CHANNEL_SECRET
+    # ทดสอบ token กับ LINE API
+    try:
+        r = _req.get("https://api.line.me/v2/bot/info",
+                     headers={"Authorization": f"Bearer {token}"}, timeout=5)
+        bot_info = r.json()
+    except Exception as e:
+        bot_info = {"error": str(e)}
+    return jsonify({
+        "LINE_TOKEN_prefix": token[:20] + "..." if token else "EMPTY",
+        "LINE_SECRET_prefix": secret[:8] + "..." if secret else "EMPTY",
+        "bot_info": bot_info,
+    })
+
+
 @app.route("/test_detect", methods=["GET"])
 def test_detect():
     """ทดสอบการตรวจ intent จากข้อความ"""
