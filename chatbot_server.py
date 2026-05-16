@@ -626,6 +626,8 @@ LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PUSH_URL  = "https://api.line.me/v2/bot/message/push"
 
 
+_last_line_error = {"status": None, "body": None, "payload": None}
+
 def line_reply(reply_token: str, messages: list):
     """ส่ง reply กลับไปยัง LINE"""
     headers = {
@@ -635,7 +637,16 @@ def line_reply(reply_token: str, messages: list):
     payload = {"replyToken": reply_token, "messages": messages}
     r = req.post(LINE_REPLY_URL, headers=headers, json=payload, timeout=10)
     if r.status_code != 200:
-        log.warning(f"LINE reply failed: {r.status_code} {r.text[:200]}")
+        log.warning(f"LINE reply failed: {r.status_code} {r.text[:500]}")
+        # เก็บ error ล่าสุดเพื่อ debug
+        _last_line_error["status"] = r.status_code
+        _last_line_error["body"] = r.text[:500]
+        # เก็บ payload (ตัด text/replyToken ออกเพื่อความปลอดภัย)
+        _last_line_error["payload"] = {
+            "msg_count": len(messages),
+            "msg_types": [m.get("type") for m in messages],
+            "image_urls": [m.get("originalContentUrl") for m in messages if m.get("type") == "image"],
+        }
 
 
 def line_reply_text(reply_token: str, text: str):
@@ -1181,6 +1192,12 @@ def debug_env():
         "LINE_SECRET_prefix": secret[:8] + "..." if secret else "EMPTY",
         "bot_info": bot_info,
     })
+
+
+@app.route("/debug_last_error", methods=["GET"])
+def debug_last_error():
+    """ดู error ล่าสุดจาก LINE Reply API"""
+    return jsonify(_last_line_error)
 
 
 @app.route("/debug_qa", methods=["GET"])
