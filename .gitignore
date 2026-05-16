@@ -1,0 +1,55 @@
+# Credentials / Secrets
+line_sender.py
+email_sender.py
+.env
+*.env
+
+# DRX data (ข้อมูลสัตว์ไข้ลับ)
+drx_data.json
+drx_bridge.py
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Logs
+*.log
+chatbot_log.txt
+tunnel*.log
+tunnel_out.log
+line_summary.txt
+
+# Local tools
+cloudflared.exe
+*.bat
+setup_task_scheduler.bat
+
+# Temp / Preview
+email_preview.html
+# Log/data text files (not requirements.txt)
+chatbot_log.txt
+tunnel*.log
+line_summary.txt
+appt_sample.txt
+stock_check.txt
+final_summary.txt
+btn_audit.txt
+btn_lines.txt
+context_sections.txt
+nav_audit.txt
+btn_audit2.txt
+data_check.txt
+syntax_check.txt
+final_check.txt
+test_op1032.txt
+residual_km.txt
+
+# VS Code
+.vscode/
+
+# Windows
+Thumbs.db
+Desktop.ini
