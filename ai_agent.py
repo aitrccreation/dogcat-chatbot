@@ -78,8 +78,10 @@ SYSTEM_PROMPT = """คุณคือน้องเลิฟลี่ — พ�
 
 **โหมด Handoff (mode = "handoff")** — ใช้เมื่อ:
 • ถามเรื่องที่ไม่เกี่ยวกับสัตว์เลี้ยงหรือคลินิกเลย
-• ต้องการข้อมูลเฉพาะเจาะจงที่ต้องหมอตรวจจริง
+• ต้องการข้อมูลเฉพาะเจาะจงที่ต้องหมอตรวจจริง (เช่น ขอผลเลือด ขอประวัติการรักษา)
 → qa_id = 0, confidence = "low", answer = ""
+→ draft = เขียนตัวอย่างคำตอบที่เหมาะสมสำหรับให้พนักงานนำไปใช้ตอบลูกค้า
+   (เขียนให้ครบ สุภาพ อบอุ่น เหมือนพนักงานตอบเอง ใช้ "ค่ะ")
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Output: JSON เท่านั้น
@@ -88,7 +90,8 @@ Output: JSON เท่านั้น
   "qa_id": <int หรือ 0>,
   "confidence": "high" | "medium" | "low",
   "mode": "kb" | "free" | "handoff",
-  "answer": "<คำตอบอบอุ่น เป็นมิตร หรือ empty ถ้า handoff>"
+  "answer": "<คำตอบอบอุ่น เป็นมิตร หรือ empty ถ้า handoff>",
+  "draft": "<ตัวอย่างคำตอบสำหรับพนักงาน — ใส่เฉพาะ handoff mode, ว่างถ้าไม่ใช่>"
 }
 ห้ามเพิ่มข้อความใดๆ นอกเหนือจาก JSON"""
 
@@ -155,6 +158,7 @@ def match_qa(user_msg: str, qa_list: list) -> dict | None:
             "confidence": data.get("confidence", "low"),
             "mode":       mode,
             "answer":     str(data.get("answer", "")).strip(),
+            "draft":      str(data.get("draft", "")).strip(),
         }
     except Exception as e:
         log.exception(f"[AI] match_qa error: {e}")

@@ -66,6 +66,9 @@ LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_TOKEN", "")
 LINE_CHANNEL_SECRET       = os.environ.get("LINE_SECRET", "")
 FB_PAGE_ACCESS_TOKEN      = os.environ.get("FB_TOKEN",  "")
 FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_2026")
+# Lovely Bot → แจ้งเตือน admin เมื่อบอทตอบไม่ได้
+LOVELY_BOT_TOKEN          = os.environ.get("LOVELY_BOT_TOKEN", "")
+ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "")
 CLINIC_PHONE              = "080-4288181"    # สาขาราชวิถี (หลัก)
 CLINIC_PHONE2             = "090-1556446"   # สาขาหลังม.ศิลปากร
 CLINIC_LINE_OA            = "@dogcatlovely" # LINE OA
@@ -758,6 +761,66 @@ def quick_replies() -> list:
 
 
 # ──────────────────────────────────────────────
+#  ADMIN NOTIFICATION — แจ้งเตือนเมื่อบอทตอบไม่ได้
+# ──────────────────────────────────────────────
+_notified_recently: dict = {}   # user_id → timestamp (cooldown 10 นาที)
+NOTIFY_COOLDOWN_SEC = 600       # ไม่ส่ง noti ซ้ำภายใน 10 นาที/user
+
+
+def notify_admin_unanswered(user_id: str, user_text: str, draft: str = ""):
+    """
+    ส่ง push LINE ไปหา admin (Wirote) เมื่อบอทตอบไม่ได้
+    พร้อมแนบ draft คำตอบที่ AI แนะนำ
+    """
+    if not LOVELY_BOT_TOKEN or not ADMIN_LINE_ID:
+        log.warning("[notify] LOVELY_BOT_TOKEN หรือ ADMIN_LINE_ID ยังไม่ได้ตั้งค่า")
+        return
+
+    # cooldown — ไม่ spam ถ้า user เดิมถามซ้ำเร็วๆ
+    from datetime import datetime
+    now_ts = datetime.now().timestamp()
+    last = _notified_recently.get(user_id, 0)
+    if now_ts - last < NOTIFY_COOLDOWN_SEC:
+        log.info(f"[notify] cooldown active for {user_id} — skip")
+        return
+    _notified_recently[user_id] = now_ts
+
+    # สร้างข้อความแจ้ง admin
+    short_uid = user_id[-8:] if len(user_id) > 8 else user_id
+    lines = [
+        "🔔 บอทตอบไม่ได้ — รอการตอบกลับ",
+        "━━━━━━━━━━━━━━━━━━",
+        f"👤 User: ...{short_uid}",
+        f"❓ คำถาม: {user_text}",
+        "━━━━━━━━━━━━━━━━━━",
+    ]
+    if draft:
+        lines.append("💡 ตัวอย่างคำตอบ (AI draft):")
+        lines.append(draft[:500])
+        lines.append("━━━━━━━━━━━━━━━━━━")
+    lines.append("📱 กรุณาตอบใน LINE OA Manager ค่ะ")
+
+    msg = "\n".join(lines)
+
+    headers = {
+        "Content-Type":  "application/json",
+        "Authorization": f"Bearer {LOVELY_BOT_TOKEN}",
+    }
+    payload = {
+        "to": ADMIN_LINE_ID,
+        "messages": [{"type": "text", "text": msg}],
+    }
+    try:
+        r = req.post(LINE_PUSH_URL, headers=headers, json=payload, timeout=10)
+        if r.status_code == 200:
+            log.info(f"[notify] admin notified for user={short_uid}")
+        else:
+            log.warning(f"[notify] push failed: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        log.warning(f"[notify] push error: {e}")
+
+
+# ──────────────────────────────────────────────
 #  Q&A FLOW — Session state + multi-step
 # ──────────────────────────────────────────────
 _user_sessions: dict = {}
@@ -996,11 +1059,13 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         log.warning(f"[{user_id}] AI agent error: {e}")
         ai_result = None
 
+    ai_draft = ""   # draft คำตอบสำหรับ admin
     if ai_result:
         ai_mode   = ai_result.get("mode", "kb")
         ai_conf   = ai_result["confidence"]
         qa_id     = ai_result["qa_id"]
         ai_answer = ai_result["answer"]
+        ai_draft  = ai_result.get("draft", "")
         log.info(f"[{user_id}] AI mode={ai_mode} conf={ai_conf} qa_id={qa_id}")
 
         # ── 3a. Free mode — ตอบอิสระด้านสุขภาพสัตว์ ──
@@ -1018,6 +1083,13 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                     "text":   answer_text + FOOTER,
                     "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
                 }
+
+        # ── 3c. AI handoff — แจ้ง admin ทันที ──
+        if ai_mode == "handoff":
+            reset_session(user_id)
+            sess["handed_off"] = True
+            notify_admin_unanswered(user_id, user_text, ai_draft)
+            return {"text": CONTACT_STAFF_MSG, "images": []}
 
     # ── 4. Menu trigger detection (สำหรับคำสั้นๆ เช่น "ทำหมัน", "วัคซีน") ──
     menu_key = detect_menu_trigger(user_text)
@@ -1038,6 +1110,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
             elif choice == len(sess["candidates"]) + 1:
                 sess["candidates"] = []
                 sess["handed_off"] = True
+                notify_admin_unanswered(user_id, user_text, ai_draft)
                 return {"text": CONTACT_STAFF_MSG, "images": []}
             else:
                 return {"text": f"ขออภัยค่ะ เลือกเลข 1-{len(sess['candidates'])+1} นะคะ", "images": []}
@@ -1050,6 +1123,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         if qa.is_negative(user_text):
             sess["candidates"] = []
             sess["handed_off"] = True
+            notify_admin_unanswered(user_id, user_text, ai_draft)
             return {"text": CONTACT_STAFF_MSG, "images": []}
         # ตอบนอกเหนือ → fall through ค้นใหม่
         sess["candidates"] = []
@@ -1069,6 +1143,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     candidates = qa.find_candidates(user_text, top_k=4)
     if not candidates:
         sess["handed_off"] = True
+        notify_admin_unanswered(user_id, user_text, ai_draft)
         return {"text": NO_MATCH_MSG, "images": []}
 
     if len(candidates) == 1:
