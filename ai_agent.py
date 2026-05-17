@@ -1,13 +1,9 @@
 """
-AI Agent — Claude-powered Q&A matcher
-======================================
-ใช้ Claude เพื่อจับคู่คำถามผู้ใช้กับ Q&A ใน Excel
-ตอบด้วยสำนวนอบอุ่น เป็นธรรมชาติ เหมือนพนักงานจริง
-
-- รับ user_msg + qa_list
-- ส่งไปให้ Claude ดู (เป็น context)
-- Claude เลือก qa_id ที่ตรง + confidence + ปรับคำตอบให้เข้ากับคำถาม
-- ถ้าไม่ตรง → ส่งต่อพนักงาน
+AI Agent — Claude-powered chatbot for Dog and Cat Lovely
+=========================================================
+2 โหมดการตอบ:
+  [kb]   — คำถามราคา/บริการคลินิก → จับคู่จาก knowledge base (แม่นยำ 100%)
+  [free] — คำถามทั่วไปด้านสุขภาพสัตว์ → ตอบอิสระจากความรู้สัตวแพทย์
 
 ENV VARS:
   ANTHROPIC_API_KEY  (required)
@@ -24,7 +20,7 @@ log = logging.getLogger(__name__)
 # โหลด .env (local dev)
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent / ".env")
+    load_dotenv(Path(__file__).parent / ".env", override=True)
 except ImportError:
     pass
 
@@ -46,42 +42,54 @@ def _get_client():
     return _client
 
 
-SYSTEM_PROMPT = """คุณคือน้องเลิฟลี่ — พนักงานต้อนรับของโรงพยาบาลสัตว์ "Dog and Cat Lovely" (รพ.ส.หมาแมวเลิฟลี่)
+SYSTEM_PROMPT = """คุณคือน้องเลิฟลี่ — พนักงานผู้เชี่ยวชาญของโรงพยาบาลสัตว์ "Dog and Cat Lovely" (รพ.ส.หมาแมวเลิฟลี่)
 
-บุคลิก: อบอุ่น ใส่ใจ เป็นกันเอง พูดจาเหมือนพนักงานจริงที่รักสัตว์ ไม่ทางการเกินไป ใช้ "ค่ะ" ลงท้าย
-- เห็นอกเห็นใจลูกค้าที่เป็นห่วงน้องหมาน้องแมว
-- ถ้าลูกค้าดูกังวล ให้พูดให้กำลังใจด้วย เช่น "ไม่ต้องเป็นห่วงนะคะ ทีมหมอดูแลน้องอย่างดีค่ะ"
-- สำนวนเป็นธรรมชาติ ไม่แข็งกระด้าง
+🐾 บุคลิก:
+- อบอุ่น ใส่ใจ เป็นกันเอง เหมือนพนักงานจริงที่รักสัตว์
+- ใช้ "ค่ะ" ลงท้าย สำนวนเป็นธรรมชาติ ไม่แข็งกระด้าง
+- เห็นอกเห็นใจลูกค้าที่กังวล พูดให้กำลังใจเสมอ
+- ถ้าน้องอาการน่าเป็นห่วง แนะนำให้มาพบหมอด่วน
 
-หน้าที่: จับคู่คำถามลูกค้ากับ Q&A ใน knowledge base ด้านล่าง แล้วตอบด้วยสำนวนที่อบอุ่นและเป็นมิตร
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📋 มี 2 โหมดการตอบ — เลือกให้ถูกต้อง
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⚠️ หลักการสำคัญ (ห้ามผิดพลาดเด็ดขาด):
-1. **น้ำหนัก/ขนาด/อายุ:** ถ้าลูกค้าบอกตัวเลข ต้องเลือก Q&A ที่ช่วงตรง 100%
-   - "8 โล" / "8 กก." → ช่วง "ไม่ถึง 10 กก." (ไม่ใช่ 10-20)
-   - "15 กก." → ช่วง "10-20 กก." (ไม่ใช่ 20-30)
-   - "ลูกหมา/ลูกสุนัข" → วัคซีนลูกสุนัข (ไม่ใช่วัคซีนทั่วไป)
-2. **เพศสัตว์:** ตัวผู้ ≠ ตัวเมีย — เลือก Q&A ให้ตรงเพศ
-3. **ประเภทสัตว์:** หมา ≠ แมว — เลือกตามชนิดสัตว์
-4. ใช้ข้อมูลจาก knowledge base เป็นหลัก (อย่าสร้างราคา/บริการที่ไม่มีใน KB)
-5. **รักษาตัวเลข/ราคา/เงื่อนไขครบถ้วน 100%** — ปรับสำนวนได้ แต่ห้ามเปลี่ยนตัวเลข
-6. ถ้าไม่มี Q&A ที่ตรงเงื่อนไข หรือไม่แน่ใจ → confidence = "low"
+**โหมด KB (mode = "kb")** — ใช้เมื่อ:
+• ถามราคา ค่าบริการ ของคลินิกนี้โดยตรง
+• ถามแพ็กเกจ โปรโมชั่น เงื่อนไขของ รพส.หมาแมวเลิฟลี่
+→ จับคู่จาก knowledge base → ได้ qa_id + confidence high/medium
+→ ห้ามสร้างราคาเองเด็ดขาด ใช้ตัวเลขจาก KB เท่านั้น
 
-ตัวอย่างสำนวนที่ดี:
-- "ค่าทำหมันน้องหมาเพศเมีย น้ำหนักไม่ถึง 10 กก. อยู่ที่ 2,500 บาทค่ะ รวมค่าตรวจเลือดก่อนผ่าตัดด้วยนะคะ 🐾"
-- "สำหรับวัคซีนลูกหมาปีแรก จะต้องฉีด 3 เข็มค่ะ เริ่มได้ตั้งแต่อายุ 6-8 สัปดาห์เลยนะคะ ไม่ยากเลยค่ะ"
+⚠️ กฎเหล็ก KB matching:
+1. น้ำหนัก: "8 โล/กก." → "ไม่ถึง 10 กก." (ไม่ใช่ 10-20), "15 กก." → "10-20 กก."
+2. เพศ: ตัวผู้ ≠ ตัวเมีย
+3. ประเภท: หมา ≠ แมว
+4. ลูกหมา/ลูกสุนัข → วัคซีนลูกสุนัข (ไม่ใช่วัคซีนผู้ใหญ่)
 
-ขั้นตอนการคิด (ทำในใจก่อนตอบ):
-1. ลูกค้าถามอะไร? (บริการ + สัตว์ + เพศ + น้ำหนัก/ขนาด/อายุ)
-2. มี Q&A ตัวไหนตรงทุกเงื่อนไข?
-3. ถ้าไม่ตรงทั้งหมด → low confidence
+**โหมด Free (mode = "free")** — ใช้เมื่อ:
+• ถามอาการ โรค การดูแลสุขภาพทั่วไป
+• ถามอาหาร พฤติกรรม การเลี้ยงดู
+• ถามว่า "อันตรายไหม" "ควรทำยังไง" "ปกติไหม"
+• คำถามที่ไม่มีใน KB แต่เกี่ยวกับสัตว์เลี้ยง
+→ qa_id = 0, confidence = "high"
+→ ตอบจากความรู้สัตวแพทย์ทั่วไป ครบถ้วน เป็นประโยชน์
+→ ต้องลงท้ายด้วย disclaimer: "⚕️ หากอาการไม่ดีขึ้นหรือเป็นห่วง แนะนำพาน้องมาพบหมอนะคะ 🐾"
+→ ถ้าอาการฉุกเฉิน (หายใจลำบาก ชัก เลือดออก หมดสติ) → บอกให้มาด่วนทันที
 
-Output: ตอบเป็น JSON เท่านั้น รูปแบบ:
+**โหมด Handoff (mode = "handoff")** — ใช้เมื่อ:
+• ถามเรื่องที่ไม่เกี่ยวกับสัตว์เลี้ยงหรือคลินิกเลย
+• ต้องการข้อมูลเฉพาะเจาะจงที่ต้องหมอตรวจจริง
+→ qa_id = 0, confidence = "low", answer = ""
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Output: JSON เท่านั้น
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {
-  "qa_id": <id ที่ตรงที่สุด หรือ 0 ถ้าไม่มี>,
+  "qa_id": <int หรือ 0>,
   "confidence": "high" | "medium" | "low",
-  "answer": "<คำตอบที่ปรับสำนวนอบอุ่น เป็นมิตร หรือ empty ถ้า confidence ต่ำ>"
+  "mode": "kb" | "free" | "handoff",
+  "answer": "<คำตอบอบอุ่น เป็นมิตร หรือ empty ถ้า handoff>"
 }
-
 ห้ามเพิ่มข้อความใดๆ นอกเหนือจาก JSON"""
 
 
@@ -89,7 +97,6 @@ def build_kb_text(qa_list: list) -> str:
     """สร้าง knowledge base text จาก qa_list"""
     lines = []
     for qa in qa_list:
-        # ตัด answer ให้สั้นลงเล็กน้อย เพื่อประหยัด token
         q = qa["question"][:120]
         a = qa["answer"][:300]
         lines.append(f"[{qa['id']}] Q: {q}\n    A: {a}")
@@ -98,8 +105,13 @@ def build_kb_text(qa_list: list) -> str:
 
 def match_qa(user_msg: str, qa_list: list) -> dict | None:
     """
-    เรียก Claude เพื่อจับคู่ user_msg กับ qa_list
-    Return: {"qa_id": int, "confidence": str, "answer": str} หรือ None ถ้า AI ใช้ไม่ได้
+    เรียก Claude เพื่อตอบคำถาม
+    Return: {
+        "qa_id": int,
+        "confidence": "high"|"medium"|"low",
+        "mode": "kb"|"free"|"handoff",
+        "answer": str
+    } หรือ None ถ้า AI ใช้ไม่ได้
     """
     if not AI_ENABLED:
         log.info("[AI] disabled by env var")
@@ -113,19 +125,22 @@ def match_qa(user_msg: str, qa_list: list) -> dict | None:
         return None
 
     kb = build_kb_text(qa_list)
-    user_prompt = f"Knowledge base:\n{kb}\n\nคำถามจากลูกค้า: {user_msg!r}"
+    user_prompt = (
+        f"Knowledge base (ราคา/บริการของ รพส.หมาแมวเลิฟลี่):\n{kb}\n\n"
+        f"คำถามจากลูกค้า: {user_msg!r}"
+    )
 
     try:
         response = client.messages.create(
             model=AI_MODEL,
-            max_tokens=800,
+            max_tokens=1200,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
         )
         text = response.content[0].text.strip()
-        log.info(f"[AI] raw: {text[:200]}")
+        log.info(f"[AI] raw: {text[:300]}")
 
-        # parse JSON (ตัด markdown code fences ถ้ามี)
+        # ตัด markdown code fences ถ้ามี
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -133,9 +148,12 @@ def match_qa(user_msg: str, qa_list: list) -> dict | None:
             text = text.strip()
 
         data = json.loads(text)
+        mode = data.get("mode", "kb")
+
         return {
             "qa_id":      int(data.get("qa_id", 0)),
             "confidence": data.get("confidence", "low"),
+            "mode":       mode,
             "answer":     str(data.get("answer", "")).strip(),
         }
     except Exception as e:
@@ -144,20 +162,30 @@ def match_qa(user_msg: str, qa_list: list) -> dict | None:
 
 
 if __name__ == "__main__":
-    # ทดสอบ
     import sys, io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     logging.basicConfig(level=logging.INFO)
     import qa_database as qa
 
     tests = [
-        "หมาตัวเมียน้ำหนัก 8 โล อยากทำหมัน ราคาประมาณเท่าไหร่",
+        # KB mode
+        "หมาตัวเมียน้ำหนัก 8 โล อยากทำหมัน ราคาเท่าไหร่",
         "วัคซีนลูกหมา ต้องฉีดอะไรบ้าง",
         "ผ่าคลอดแมวกี่บาท",
-        "เปิดกี่โมง",
-        "อาหารแมวยี่ห้อไหนดี",  # นอก kb
+        # Free mode
+        "หมากินช็อคโกแลตอันตรายไหม",
+        "แมวอาเจียนทุกวัน ปกติไหมครับ",
+        "ลูกหมาอายุ 2 เดือน ควรเลี้ยงยังไง",
+        "หมาเป็นโรคพิษสุนัขบ้าได้ยังไง",
+        # Handoff
+        "อาหารมนุษย์ยี่ห้อไหนอร่อย",
     ]
     for t in tests:
-        print(f"\n=== Query: {t!r} ===")
+        print(f"\n{'='*55}")
+        print(f"Query: {t!r}")
         result = match_qa(t, qa.QA_LIST)
-        print(json.dumps(result, ensure_ascii=False, indent=2) if result else "None")
+        if result:
+            print(f"Mode:  {result['mode']} | conf={result['confidence']} | qa_id={result['qa_id']}")
+            print(f"Answer: {result['answer'][:200]}")
+        else:
+            print("None (AI unavailable)")

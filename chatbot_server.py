@@ -988,7 +988,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
             # ไม่ใช่ตัวเลข → reset menu แล้ว fall-through หาคำถามใหม่
             sess["menu_node"] = None
 
-    # ── 3. AI Agent matching (ลำดับแรก — เพื่อให้ AI ตอบคำถามภาษาธรรมชาติได้) ──
+    # ── 3. AI Agent (ลำดับแรก — ตอบทั้ง KB mode และ Free mode) ──
     try:
         import ai_agent
         ai_result = ai_agent.match_qa(user_text, qa.QA_LIST)
@@ -996,19 +996,28 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         log.warning(f"[{user_id}] AI agent error: {e}")
         ai_result = None
 
-    if ai_result and ai_result["confidence"] == "high":
+    if ai_result:
+        ai_mode   = ai_result.get("mode", "kb")
+        ai_conf   = ai_result["confidence"]
         qa_id     = ai_result["qa_id"]
         ai_answer = ai_result["answer"]
-        qa_obj    = qa.find_by_id(qa_id) if qa_id else None
-        log.info(f"[{user_id}] AI matched qa_id={qa_id} conf=high")
+        log.info(f"[{user_id}] AI mode={ai_mode} conf={ai_conf} qa_id={qa_id}")
 
-        if qa_obj:
+        # ── 3a. Free mode — ตอบอิสระด้านสุขภาพสัตว์ ──
+        if ai_mode == "free" and ai_conf in ("high", "medium") and ai_answer:
             reset_session(user_id)
-            answer_text = ai_answer if ai_answer else qa_obj["answer"]
-            return {
-                "text":   answer_text + FOOTER,
-                "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
-            }
+            return {"text": ai_answer + FOOTER, "images": []}
+
+        # ── 3b. KB mode + high confidence — ตอบจาก knowledge base ──
+        if ai_mode == "kb" and ai_conf == "high" and qa_id:
+            qa_obj = qa.find_by_id(qa_id)
+            if qa_obj:
+                reset_session(user_id)
+                answer_text = ai_answer if ai_answer else qa_obj["answer"]
+                return {
+                    "text":   answer_text + FOOTER,
+                    "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
+                }
 
     # ── 4. Menu trigger detection (สำหรับคำสั้นๆ เช่น "ทำหมัน", "วัคซีน") ──
     menu_key = detect_menu_trigger(user_text)
@@ -1045,16 +1054,12 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         # ตอบนอกเหนือ → fall through ค้นใหม่
         sess["candidates"] = []
 
-    # ── 6. AI Agent fallback (medium confidence — รองรับเคสที่ menu/candidates ไม่เจอ) ──
-    if ai_result and ai_result["confidence"] == "medium":
-        qa_id     = ai_result["qa_id"]
-        ai_answer = ai_result["answer"]
-        qa_obj    = qa.find_by_id(qa_id) if qa_id else None
-        log.info(f"[{user_id}] AI matched qa_id={qa_id} conf=medium (fallback)")
-
+    # ── 6. KB medium confidence fallback ──
+    if ai_result and ai_result.get("mode") == "kb" and ai_result["confidence"] == "medium":
+        qa_obj = qa.find_by_id(ai_result["qa_id"]) if ai_result["qa_id"] else None
         if qa_obj:
             reset_session(user_id)
-            answer_text = ai_answer if ai_answer else qa_obj["answer"]
+            answer_text = ai_result["answer"] if ai_result["answer"] else qa_obj["answer"]
             return {
                 "text":   answer_text + FOOTER,
                 "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
