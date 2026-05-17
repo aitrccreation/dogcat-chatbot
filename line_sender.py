@@ -153,6 +153,62 @@ def _extract_pet_list(raw_rows: list) -> list[dict]:
     return out
 
 
+def build_stock_message(data: dict) -> str:
+    """รายงานสต็อกใกล้หมด — แยกเป็นข้อความที่ 2 (รอบ 20:20)
+    แสดง **ทุกรายการ** จาก DRX op=590 + stock_alert_filter_id=1
+    """
+    raw = data.get("_raw", {})
+    low_stock_rows = raw.get("low_stock", []) or []
+    dr_date_str    = data.get("daily_revenue", {}).get("date", "") or thai_now()
+    SEP = "━" * 17
+
+    lines = [
+        "📦 รายงานสต็อกใกล้หมด",
+        "🏥 Dog and Cat Lovely",
+        f"📅 {dr_date_str}",
+        SEP,
+        "",
+    ]
+
+    if not low_stock_rows:
+        lines.append("✅ สต็อกปกติ — ไม่มีรายการใกล้หมด")
+        lines += ["", SEP, "🐾 Dog and Cat Lovely Pet Hospital"]
+        return "\n".join(lines)
+
+    # Group by category (cell[17])
+    from collections import defaultdict as _dd
+    by_cat = _dd(list)
+    for row in low_stock_rows:
+        cells = row.get("cell", []) if isinstance(row, dict) else []
+        if len(cells) < 18:
+            continue
+        name      = cells[1]
+        qty_unit  = cells[2]   # "30.0 เม็ด"
+        category  = cells[17]  # "รายการยา"
+        by_cat[category].append((name, qty_unit))
+
+    total = len(low_stock_rows)
+    lines.append(f"⚠️ ทั้งหมด {total} รายการ")
+    lines.append("")
+
+    # แสดงทุกหมวด ทุกรายการ (ไม่ truncate)
+    for cat in sorted(by_cat.keys()):
+        items = by_cat[cat]
+        lines.append(f"📁 {cat} ({len(items)})")
+        for name, qty_unit in items:
+            lines.append(f"  • {name[:45]} — {qty_unit}")
+        lines.append("")
+
+    lines += [
+        SEP,
+        "🔗 ดูในระบบ DRX:",
+        "http://dogcatlovely.thddns.net:8080/doctordogs/stock?type=-1",
+        "",
+        "🐾 Dog and Cat Lovely Pet Hospital",
+    ]
+    return "\n".join(lines)
+
+
 def build_message(data: dict, include_stock: bool = False) -> str:
     dr     = data.get("daily_revenue", {})
     stock  = data.get("stock", [])
@@ -287,43 +343,8 @@ def build_message(data: dict, include_stock: bool = False) -> str:
     if voided_count > 0:
         lines.append(f"  🗑️ ยกเลิก:    {voided_count} ใบ")
 
-    # ──────────────────────────────────────────────
-    # สต็อก "ใกล้หมด" — แสดงเฉพาะเมื่อ include_stock=True (รอบ 20:20)
-    # ──────────────────────────────────────────────
-    if include_stock:
-        lines += ["", SEP]
-        low_stock_rows = raw.get("low_stock", []) or []
-
-        if low_stock_rows:
-            from collections import defaultdict as _dd
-            by_cat = _dd(list)
-            for row in low_stock_rows:
-                cells = row.get("cell", []) if isinstance(row, dict) else []
-                if len(cells) < 18:
-                    continue
-                name      = cells[1]
-                qty_unit  = cells[2]   # "30.0 เม็ด"
-                category  = cells[17]  # "รายการยา"
-                by_cat[category].append((name, qty_unit))
-
-            total = len(low_stock_rows)
-            lines.append(f"⚠️ สต็อกใกล้หมด: {total} รายการ")
-            for cat in sorted(by_cat.keys()):
-                items = by_cat[cat]
-                lines.append("")
-                lines.append(f"📁 {cat} ({len(items)} รายการ)")
-                for name, qty_unit in items[:12]:
-                    lines.append(f"  • {name[:40]} — เหลือ {qty_unit}")
-                if len(items) > 12:
-                    lines.append(f"  ... และอีก {len(items)-12} รายการ")
-        else:
-            lines.append("✅ สต็อกปกติ ไม่มีรายการใกล้หมด")
-
-        lines += [
-            "",
-            "🔗 ดูเต็มในระบบ DRX:",
-            "   http://dogcatlovely.thddns.net:8080/doctordogs/stock?type=-1",
-        ]
+    # หมายเหตุ: รายงานสต็อกแยกเป็นข้อความที่ 2 (build_stock_message)
+    # ส่งเฉพาะรอบ 20:xx
 
     lines += ["", SEP, "🐾 Dog and Cat Lovely Pet Hospital"]
     return "\n".join(lines)
@@ -419,18 +440,33 @@ def main():
     else:
         data = load_data()
 
-    # สร้างข้อความ
-    msg = build_message(data, include_stock=include_stock)
+    # สร้างข้อความหลัก (ปกติ — รายรับ/เคส/Admit)
+    msg = build_message(data, include_stock=False)
+
+    # ข้อความสต็อก (รอบ 20:20)
+    stock_msg = build_stock_message(data) if include_stock else None
 
     # บันทึก preview
-    SUMMARY_FILE.write_text(msg, encoding="utf-8")
+    if stock_msg:
+        SUMMARY_FILE.write_text(msg + "\n\n" + "=" * 50 + "\n\n" + stock_msg, encoding="utf-8")
+    else:
+        SUMMARY_FILE.write_text(msg, encoding="utf-8")
 
     # แสดง preview
     print()
     print("─" * 45)
     print(msg)
+    if stock_msg:
+        print()
+        print("=" * 45)
+        print("📦 ข้อความที่ 2 (สต็อก):")
+        print("=" * 45)
+        print(stock_msg)
     print("─" * 45)
     print(f"\n📄 บันทึก preview → {SUMMARY_FILE.name}")
+    print(f"   main message:  {len(msg):,} chars")
+    if stock_msg:
+        print(f"   stock message: {len(stock_msg):,} chars")
 
     # ส่ง LINE
     if not do_send and not broadcast:
@@ -441,19 +477,21 @@ def main():
 
     if LINE_CHANNEL_ACCESS_TOKEN == "YOUR_LINE_CHANNEL_ACCESS_TOKEN":
         print("\n⚠️  ยังไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN!")
-        print("   ดูวิธีขอ token ด้านบนของไฟล์ line_sender.py")
-        print("   หรือตั้ง environment variable: LINE_TOKEN=xxx")
         return
 
     print("\n📤 กำลังส่ง LINE...")
 
     if broadcast:
         send_line_broadcast(LINE_CHANNEL_ACCESS_TOKEN, msg)
+        if stock_msg:
+            send_line_broadcast(LINE_CHANNEL_ACCESS_TOKEN, stock_msg)
     elif LINE_TARGET_ID == "YOUR_USER_ID_OR_GROUP_ID":
         print("⚠️  ยังไม่ได้ตั้งค่า LINE_TARGET_ID!")
-        print("   ตั้ง environment variable: LINE_TARGET_ID=Uxxxxxxxxxx")
     else:
+        # ส่งทั้ง 2 ข้อความใน push เดียว (LINE รองรับ messages array สูงสุด 5 ข้อความ)
         send_line_push(LINE_CHANNEL_ACCESS_TOKEN, LINE_TARGET_ID, msg)
+        if stock_msg:
+            send_line_push(LINE_CHANNEL_ACCESS_TOKEN, LINE_TARGET_ID, stock_msg)
 
 
 if __name__ == "__main__":
