@@ -481,13 +481,13 @@ def _legacy_build_response(intent: str, user_msg: str = "") -> str:
         if vets:
             vet_list = "\n".join(f"  • {v.get('name', v)}" for v in vets[:5])
             return (
-                "👩‍⚕️ ทีมสัตวแพทย์ของเรา\n"
+                "👩‍⚕️ ทีมคุณหมอของเรา\n"
                 "━━━━━━━━━━━━━━━━━━\n"
                 f"{vet_list}\n\n"
                 f"📞 นัดพบสัตวแพทย์: {CLINIC_PHONE}"
             )
         return (
-            "👩‍⚕️ ทีมสัตวแพทย์ผู้เชี่ยวชาญ\n"
+            "👩‍⚕️ ทีมคุณหมอผู้เชี่ยวชาญ\n"
             "พร้อมดูแลสัตว์เลี้ยงของคุณด้วยความใส่ใจ 🐾\n\n"
             f"📞 สาขาราชวิถี: {CLINIC_PHONE}\n"
             f"📞 สาขาหลังม.ศิลปากร: {CLINIC_PHONE2}"
