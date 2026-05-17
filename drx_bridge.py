@@ -279,13 +279,13 @@ def fetch_calendar(session, days_back=7, days_fwd=30) -> list:
     return result if isinstance(result, list) else []
 
 
-def fetch_stock(session, max_pages=4) -> list:
+def fetch_stock(session, max_pages=200) -> list:
     """dda=stock&op=520 → รายการสต็อกทั้งหมด (paginated)
-    Response: {"stocks":[...], "page":1, "numberOfPages":N, "numberOfStocks":N}
+    หมายเหตุ: DRX API ส่งทีละ 7 รายการ/หน้า (rows ไม่มีผล)
+    มีทั้งหมด ~1,359 รายการ ใช้เวลาดึง ~2-3 นาที
     Stock keys: stockUID, stockId, stockName, stockTypeId, stockNumber,
                 totalStockRemaining, stockNumberAlert, stockSalePrice,
                 stockStatus, stockExpireStatus, stockNumberUnit
-    rows=200 per page, max 4 pages = up to 800 items
     """
     all_stocks = []
     for page in range(1, max_pages + 1):
@@ -295,7 +295,7 @@ def fetch_stock(session, max_pages=4) -> list:
             "_search": "false",
             "rows": "200",
             "page": str(page),
-            "sidx": "",
+            "sidx": "stockId",
             "sord": "asc",
             "type": "-1",
             "wordsearch": "",
@@ -304,6 +304,8 @@ def fetch_stock(session, max_pages=4) -> list:
             break
         if isinstance(result, dict):
             stocks = result.get("stocks", [])
+            if not stocks:
+                break
             all_stocks.extend(stocks)
             total_pages = result.get("numberOfPages", 1)
             if page >= total_pages:
@@ -751,7 +753,7 @@ def main():
     raw_today_cases  = step("Today cases (all)",     fetch_today_cases)
     raw_appointments = step("appointments (grid)",   fetch_appointments,  rows=200)
     raw_calendar     = step("calendar events",       fetch_calendar)
-    raw_stock        = step("stock list (paged)",    fetch_stock, max_pages=3)
+    raw_stock        = step("stock list (paged)",    fetch_stock, max_pages=200)
     raw_stock_exp    = []  # included in fetch_stock stockExpireStatus
     raw_daily_rev    = step("daily revenue (today)", fetch_daily_revenue)
     raw_finance_mo   = step("finance monthly",       fetch_finance_monthly)
@@ -813,6 +815,18 @@ def main():
             "appointments":    raw_appointments,
             "calendar":        raw_calendar,
             "stock":           raw_stock[:5] if raw_stock else [],
+            # stock_all: เก็บเฉพาะ field ที่ใช้สรุป (ประหยัด JSON size)
+            "stock_all":       [
+                {
+                    "stockUID":  s.get("stockUID"),
+                    "stockId":   s.get("stockId"),
+                    "stockName": s.get("stockName"),
+                    "stockTypeId": s.get("stockTypeId"),
+                    "stockNumberAlert": s.get("stockNumberAlert", 0),
+                    "stockSalePrice":   s.get("stockSalePrice", 0),
+                }
+                for s in (raw_stock or [])
+            ],
             "daily_revenue":   raw_daily_rev,
             "finance_monthly": raw_finance_mo,
             "finance_summary": raw_finance_sum,
