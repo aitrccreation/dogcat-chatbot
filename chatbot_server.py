@@ -941,22 +941,52 @@ def build_menu_message(menu_key: str, platform: str = "line") -> str:
     return "\n".join(lines)
 
 
+# ── Handoff cooldown ──
+# เมื่อบอทตอบไม่ได้ → handoff → พนักงานต้องคุยต่อ
+# บอทเงียบ X วินาที เพื่อไม่ขัดจังหวะ แล้ว auto-resume เพื่อให้ลูกค้ารายอื่นใช้บอทได้
+HANDOFF_COOLDOWN_SEC = int(os.environ.get("HANDOFF_COOLDOWN_SEC", "7200"))  # default 2 ชม.
+
+
 def get_session(user_id: str) -> dict:
     if user_id not in _user_sessions:
         _user_sessions[user_id] = {
-            "candidates": [],
-            "handed_off": False,
-            "menu_node":  None,   # menu tree node ที่ user อยู่
+            "candidates":    [],
+            "handoff_until": 0,    # epoch timestamp; 0 = not handed off
+            "menu_node":     None,
         }
-    return _user_sessions[user_id]
+    sess = _user_sessions[user_id]
+    # backward compat — ถ้ามี handed_off boolean เก่า แปลงเป็น handoff_until
+    if "handed_off" in sess:
+        if sess.pop("handed_off") and not sess.get("handoff_until"):
+            sess["handoff_until"] = datetime.now().timestamp() + HANDOFF_COOLDOWN_SEC
+    sess.setdefault("handoff_until", 0)
+    return sess
 
 
 def reset_session(user_id: str):
     _user_sessions[user_id] = {
-        "candidates": [],
-        "handed_off": False,
-        "menu_node":  None,
+        "candidates":    [],
+        "handoff_until": 0,
+        "menu_node":     None,
     }
+
+
+def is_handed_off(sess: dict) -> bool:
+    """True ถ้าอยู่ใน handoff cooldown — auto-expire หลัง 2 ชม."""
+    until = float(sess.get("handoff_until", 0) or 0)
+    if until <= 0:
+        return False
+    if datetime.now().timestamp() >= until:
+        # cooldown หมดอายุ — auto-resume
+        sess["handoff_until"] = 0
+        sess["candidates"] = []
+        return False
+    return True
+
+
+def set_handoff(sess: dict):
+    """ตั้ง handoff cooldown 2 ชม."""
+    sess["handoff_until"] = datetime.now().timestamp() + HANDOFF_COOLDOWN_SEC
 
 
 def build_candidates_message(candidates: list, platform: str = "line") -> str:
@@ -1006,9 +1036,10 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     """
     sess = get_session(user_id)
 
-    # ── 0. handed_off → ไม่ตอบ ──
-    if sess.get("handed_off"):
-        log.info(f"[{user_id}] handed off — skip")
+    # ── 0. Handoff cooldown → บอทเงียบ (ให้พนักงานคุย) ──
+    if is_handed_off(sess):
+        remaining = int(sess["handoff_until"] - datetime.now().timestamp())
+        log.info(f"[{user_id}] handoff cooldown {remaining}s remaining — skip")
         return None
 
     # ── 1. Greeting → reset ──
@@ -1044,7 +1075,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                 elif choice == n + 1:
                     # ติดต่อพนักงาน
                     reset_session(user_id)
-                    sess["handed_off"] = True
+                    set_handoff(sess)
                     return {"text": CONTACT_STAFF_MSG, "images": []}
                 else:
                     return {"text": f"กรุณาเลือกเลข 1-{n+1} ค่ะ", "images": []}
@@ -1065,7 +1096,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                 return build_answer_reply(qa_obj)
             elif early_choice == len(cands) + 1:
                 sess["candidates"] = []
-                sess["handed_off"] = True
+                set_handoff(sess)
                 log.info(f"[{user_id}] candidates fast-path → handoff (chose last option)")
                 notify_admin_unanswered(user_id, user_text, "")
                 return {"text": CONTACT_STAFF_MSG, "images": []}
@@ -1080,7 +1111,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         # ไม่ใช่ → handoff
         if qa.is_negative(user_text):
             sess["candidates"] = []
-            sess["handed_off"] = True
+            set_handoff(sess)
             log.info(f"[{user_id}] candidates fast-path negative → handoff")
             notify_admin_unanswered(user_id, user_text, "")
             return {"text": CONTACT_STAFF_MSG, "images": []}
@@ -1122,7 +1153,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         # ── 3c. AI handoff — แจ้ง admin ทันที ──
         if ai_mode == "handoff":
             reset_session(user_id)
-            sess["handed_off"] = True
+            set_handoff(sess)
             notify_admin_unanswered(user_id, user_text, ai_draft)
             return {"text": CONTACT_STAFF_MSG, "images": []}
 
@@ -1154,7 +1185,7 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     # ── 7. Last-resort: Keyword search ──
     candidates = qa.find_candidates(user_text, top_k=4)
     if not candidates:
-        sess["handed_off"] = True
+        set_handoff(sess)
         notify_admin_unanswered(user_id, user_text, ai_draft)
         return {"text": NO_MATCH_MSG, "images": []}
 
@@ -1356,7 +1387,8 @@ def test_qa():
         "reply":     reply,
         "session":   {
             "candidate_ids": [c["id"] for c in sess.get("candidates", [])],
-            "handed_off":    sess.get("handed_off", False),
+            "handed_off":    is_handed_off(sess),
+            "handoff_remaining_sec": max(0, int(sess.get("handoff_until", 0) - datetime.now().timestamp())) if sess.get("handoff_until") else 0,
         },
     })
 
