@@ -316,6 +316,57 @@ def fetch_stock(session, max_pages=200) -> list:
     return all_stocks
 
 
+def fetch_low_stock(session, max_pages=10) -> list:
+    """dda=stock&op=590 + stock_alert_filter_id=1 → สต็อก "ใกล้หมด" (qty < alert)
+    Response cells:
+      [0] stockId       "01-01-0015"
+      [1] stockName     "Amoxy-clav 625 mg (tab)"
+      [2] qty + unit    "30.0 เม็ด"
+      [3] salePrice     "30 บาท"
+      [4] cost          "8 บาท"
+      [5] totalCost     "240 บาท"
+      [12] qtyNumber    "30.0"
+      [15] unit         "เม็ด"
+      [17] category     "รายการยา"
+    """
+    all_items = []
+    for page in range(1, max_pages + 1):
+        result = api_post(session, {
+            "dda":                       "stock",
+            "op":                        "590",
+            "wordsearch":                "",
+            "type":                      "-1",
+            "rxtxTypeIdFilter":          "",
+            "_search":                   "false",
+            "nd":                        str(int(time.time() * 1000)),
+            "rows":                      "100",
+            "page":                      str(page),
+            "sidx":                      "stock_type_id asc,stock_id asc",
+            "sord":                      "",
+            "rxtx_type_id_filter_list":  "",
+            "stock_alert_filter_id":     "1",   # ★ filter "ใกล้หมด"
+            "stock_use_frequency_id":    "-1",
+            "stock_price_type_id":       "-1",
+            "warehouse_id":              "-1",
+            "stock_sub_category_id_1":   "-1",
+            "stock_sub_category_id_2":   "-1",
+            "stock_sub_category_id_3":   "-1",
+            "stock_sub_category_id_4":   "-1",
+            "stock_sub_category_id_5":   "-1",
+            "include_inactive_stock":    "false",
+        })
+        if not result or not isinstance(result, dict):
+            break
+        rows = result.get("rows", [])
+        if not rows:
+            break
+        all_items.extend(rows)
+        total_pages = result.get("total", 1)
+        if page >= total_pages:
+            break
+    return all_items
+
+
 def fetch_stock_expiry(session) -> list:
     """ดึง stock ที่ใกล้หมดอายุ / ระวัง (จาก op=1515 = species list, skip)"""
     # op=1515 is actually species list, not expiry
@@ -754,6 +805,7 @@ def main():
     raw_appointments = step("appointments (grid)",   fetch_appointments,  rows=200)
     raw_calendar     = step("calendar events",       fetch_calendar)
     raw_stock        = step("stock list (paged)",    fetch_stock, max_pages=200)
+    raw_low_stock    = step("low stock (ใกล้หมด)",    fetch_low_stock)
     raw_stock_exp    = []  # included in fetch_stock stockExpireStatus
     raw_daily_rev    = step("daily revenue (today)", fetch_daily_revenue)
     raw_finance_mo   = step("finance monthly",       fetch_finance_monthly)
@@ -815,6 +867,7 @@ def main():
             "appointments":    raw_appointments,
             "calendar":        raw_calendar,
             "stock":           raw_stock[:5] if raw_stock else [],
+            "low_stock":       raw_low_stock or [],   # ★ รายการ "ใกล้หมด" จาก op=590
             # stock_all: เก็บเฉพาะ field ที่ใช้สรุป (ประหยัด JSON size)
             "stock_all":       [
                 {

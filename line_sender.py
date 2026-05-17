@@ -288,42 +288,41 @@ def build_message(data: dict) -> str:
         lines.append(f"  🗑️ ยกเลิก:    {voided_count} ใบ")
 
     # ──────────────────────────────────────────────
-    # สต็อก — นับจำนวนชนิดยา/เวชภัณฑ์ + link DRX
+    # สต็อก "ใกล้หมด" จาก DRX op=590 + stock_alert_filter_id=1
     # ──────────────────────────────────────────────
-    lines += ["", SEP, "📦 คลังสินค้า"]
+    lines += ["", SEP]
+    low_stock_rows = raw.get("low_stock", []) or []
 
-    # นับตามประเภท (stockTypeId)
-    TYPE_LABEL = {
-        1: "💊 ยา",
-        2: "🥫 อาหาร",
-        3: "🩹 เวชภัณฑ์",
-        4: "💉 วัคซีน",
-        5: "📦 ของใช้",
-        6: "🔧 อื่นๆ",
-        7: "🧪 Lab",
-    }
-    raw_stock_all = raw.get("stock_all", []) or []
-    if raw_stock_all:
-        from collections import Counter as _Counter
-        type_count = _Counter(
-            s.get("stockTypeId", 0)
-            for s in raw_stock_all
-            if s.get("stockTypeId") in TYPE_LABEL
-        )
-        total_items = sum(type_count.values())
-        lines.append(f"  รายการรวม: {total_items:,} ชนิด")
-        for tid in sorted(type_count.keys()):
-            label = TYPE_LABEL.get(tid, f"type={tid}")
-            lines.append(f"    {label}: {type_count[tid]} ชนิด")
+    if low_stock_rows:
+        # group ตามหมวด (cell[17])
+        from collections import defaultdict as _dd
+        by_cat = _dd(list)
+        for row in low_stock_rows:
+            cells = row.get("cell", []) if isinstance(row, dict) else []
+            if len(cells) < 18:
+                continue
+            name      = cells[1]
+            qty_unit  = cells[2]   # "30.0 เม็ด"
+            category  = cells[17]  # "รายการยา"
+            by_cat[category].append((name, qty_unit))
+
+        total = len(low_stock_rows)
+        lines.append(f"⚠️ สต็อกใกล้หมด: {total} รายการ")
+        for cat in sorted(by_cat.keys()):
+            items = by_cat[cat]
+            lines.append(f"")
+            lines.append(f"📁 {cat} ({len(items)} รายการ)")
+            for name, qty_unit in items[:12]:
+                lines.append(f"  • {name[:40]} — เหลือ {qty_unit}")
+            if len(items) > 12:
+                lines.append(f"  ... และอีก {len(items)-12} รายการ")
     else:
-        lines.append("  (ดึงข้อมูลสต็อกไม่สำเร็จ)")
+        lines.append("✅ สต็อกปกติ ไม่มีรายการใกล้หมด")
 
-    # Link ไปหน้า DRX filter "ใกล้หมด"
     lines += [
         "",
-        "⚠️ สต็อกใกล้หมด — ดูในระบบ DRX:",
-        "🔗 http://dogcatlovely.thddns.net:8080/doctordogs/stock?type=-1",
-        "   (เลือก filter \"สินค้า → ใกล้หมด\")",
+        "🔗 ดูเต็มในระบบ DRX:",
+        "   http://dogcatlovely.thddns.net:8080/doctordogs/stock?type=-1",
     ]
 
     lines += ["", SEP, "🐾 Dog and Cat Lovely Pet Hospital"]
