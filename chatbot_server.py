@@ -1127,29 +1127,31 @@ def handle_line_event(event: dict):
 
 
 # ──────────────────────────────────────────────
-#  ROUTES — FACEBOOK MESSENGER WEBHOOK
+#  ROUTES — FACEBOOK MESSENGER WEBHOOK (ปิดชั่วคราว)
 # ──────────────────────────────────────────────
+FB_ENABLED = os.environ.get("FB_ENABLED", "false").lower() == "true"
+
 @app.route("/webhook/fb", methods=["GET"])
 def fb_verify():
-    """Facebook webhook verification"""
+    """Facebook webhook verification — ปิดชั่วคราว"""
+    if not FB_ENABLED:
+        return "FB webhook disabled", 503
     mode      = request.args.get("hub.mode")
     token     = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
-
     if mode == "subscribe" and token == FB_VERIFY_TOKEN:
         log.info("Facebook webhook verified!")
         return challenge, 200
-    else:
-        log.warning(f"FB verification failed: mode={mode} token={token}")
-        abort(403)
+    abort(403)
 
 
 @app.route("/webhook/fb", methods=["POST"])
 def fb_webhook():
+    if not FB_ENABLED:
+        return "ok", 200   # รับ request แต่ไม่ประมวลผล
     data = request.json
     if data.get("object") != "page":
         return "ok", 200
-
     for entry in data.get("entry", []):
         for event in entry.get("messaging", []):
             handle_fb_event(event)
