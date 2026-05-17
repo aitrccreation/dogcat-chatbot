@@ -165,6 +165,88 @@ def match_qa(user_msg: str, qa_list: list) -> dict | None:
         return None
 
 
+# ============================================================
+#  POLISH ANSWER — ปรับ KB answer ให้อ่อนโยนตาม persona น้องเลิฟลี่
+# ============================================================
+POLISH_SYSTEM_PROMPT = """คุณคือน้องเลิฟลี่ — พนักงานผู้เชี่ยวชาญของโรงพยาบาลสัตว์ "Dog and Cat Lovely"
+
+🐾 บุคลิก:
+- อบอุ่น ใส่ใจ เป็นกันเอง เหมือนพนักงานจริงที่รักสัตว์
+- ใช้ "ค่ะ" ลงท้าย สำนวนเป็นธรรมชาติ ไม่แข็งกระด้าง
+- เห็นอกเห็นใจลูกค้าที่กังวล
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+งานของคุณ: ปรับคำตอบจาก Knowledge Base ให้มีโทนอ่อนโยน อบอุ่น
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️ กฎเหล็ก (ห้ามฝ่าฝืน):
+1. ❌ ห้ามเปลี่ยน/ปัด/เพิ่มราคา หรือ ตัวเลขใดๆ จาก base answer
+2. ❌ ห้ามเปลี่ยนเงื่อนไข/ขั้นตอน/รายการที่อยู่ใน base answer
+3. ❌ ห้ามตัดข้อมูลสำคัญออก (ราคา รายการที่รวม-ไม่รวม เวลา ฯลฯ)
+4. ✅ เพิ่มคำทักทาย/คำลงท้ายที่อบอุ่น ตามบริบทคำถาม
+5. ✅ จัด format ให้อ่านง่าย (bullet, emoji ที่เหมาะสม)
+6. ✅ ใช้ "ค่ะ" "นะคะ" ตามจังหวะธรรมชาติ
+
+ตอบกลับเป็นข้อความล้วน ไม่ต้องมี JSON หรือ markdown code fence"""
+
+
+# Cache polished answers ต่อ qa_id (เพื่อลด token + latency)
+_polish_cache: dict = {}
+
+def polish_answer(qa_id: int, question: str, base_answer: str) -> str:
+    """
+    ปรับ KB answer ให้อ่อนโยนผ่าน AI — คงราคา/ตัวเลขเดิม
+    ใช้ cache ต่อ qa_id เพื่อไม่เรียก AI ทุกครั้ง
+    Return: polished text หรือ base_answer ถ้า AI ใช้ไม่ได้
+    """
+    if not AI_ENABLED or not ANTHROPIC_API_KEY:
+        return base_answer
+
+    # Cache hit
+    if qa_id in _polish_cache:
+        return _polish_cache[qa_id]
+
+    client = _get_client()
+    if client is None:
+        return base_answer
+
+    user_prompt = (
+        f"คำถามลูกค้า: {question}\n\n"
+        f"คำตอบจาก Knowledge Base (base):\n{base_answer}\n\n"
+        f"ปรับคำตอบนี้ให้อ่อนโยน อบอุ่นตาม persona น้องเลิฟลี่ "
+        f"โดยคงราคา/ตัวเลข/รายการที่รวม-ไม่รวมเดิมเป๊ะ"
+    )
+
+    try:
+        response = client.messages.create(
+            model=AI_MODEL,
+            max_tokens=1500,
+            system=POLISH_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+        polished = response.content[0].text.strip()
+        # ตัด markdown code fence ถ้ามี
+        if polished.startswith("```"):
+            polished = polished.split("```")[1]
+            if polished.startswith("text"):
+                polished = polished[4:]
+            polished = polished.strip()
+        # Sanity check: ถ้า polished สั้นกว่า 30% ของ base = น่าจะตัดข้อมูล → fallback
+        if len(polished) < len(base_answer) * 0.3:
+            log.warning(f"[AI] polish too short for qa_id={qa_id} — fallback to base")
+            return base_answer
+        _polish_cache[qa_id] = polished
+        return polished
+    except Exception as e:
+        log.exception(f"[AI] polish_answer error: {e}")
+        return base_answer
+
+
+def clear_polish_cache():
+    """ล้าง cache (เรียกหลังอัพเดต KB)"""
+    _polish_cache.clear()
+
+
 if __name__ == "__main__":
     import sys, io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")

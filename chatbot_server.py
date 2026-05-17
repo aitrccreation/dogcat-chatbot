@@ -1015,10 +1015,24 @@ def build_single_confirm_message(qa_item: dict) -> str:
     )
 
 
+AI_POLISH_ENABLED = os.environ.get("AI_POLISH_ENABLED", "true").lower() != "false"
+
+
 def build_answer_reply(qa_item: dict) -> dict:
-    """สร้าง reply dict {text, images} สำหรับคำตอบ"""
+    """สร้าง reply dict {text, images} สำหรับคำตอบ
+    ถ้า AI_POLISH_ENABLED → AI ปรับ tone ให้อ่อนโยนตาม persona น้องเลิฟลี่ (คงราคา/ตัวเลขเดิม)
+    """
+    base_answer = qa_item["answer"]
+    if AI_POLISH_ENABLED:
+        try:
+            import ai_agent
+            base_answer = ai_agent.polish_answer(
+                qa_item["id"], qa_item["question"], base_answer
+            )
+        except Exception as e:
+            log.warning(f"polish_answer error qa_id={qa_item.get('id')}: {e}")
     return {
-        "text":   qa_item["answer"] + FOOTER,
+        "text":   base_answer + FOOTER,
         "images": [absolute_image_url(p) for p in qa_item.get("images", [])],
     }
 
