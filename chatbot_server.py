@@ -1293,6 +1293,29 @@ def test_response(intent: str):
     })
 
 
+@app.route("/test_notify", methods=["GET"])
+def test_notify():
+    """ทดสอบส่ง push แจ้งเตือน admin — เช็ก LOVELY_BOT_TOKEN + LINE_TARGET_ID"""
+    token  = LOVELY_BOT_TOKEN
+    target = ADMIN_LINE_ID
+    status = {
+        "LOVELY_BOT_TOKEN": (token[:16] + "...") if token else "❌ EMPTY",
+        "LINE_TARGET_ID":   (target[:16] + "...") if target else "❌ EMPTY",
+    }
+    if not token or not target:
+        return jsonify({"ok": False, "config": status, "error": "Missing env vars"}), 500
+
+    # ล้าง cooldown ก่อนทดสอบ
+    _notified_recently.pop("TEST_ADMIN", None)
+
+    notify_admin_unanswered(
+        user_id   = "TEST_ADMIN",
+        user_text = "🧪 ทดสอบระบบแจ้งเตือน Railway — ถ้าเห็นข้อความนี้ระบบทำงานได้ครับ",
+        draft     = "ตัวอย่างคำตอบ AI draft: สวัสดีค่ะ ขอบคุณที่สอบถามมาค่ะ ทางคลินิกจะติดต่อกลับโดยเร็วนะคะ 🐾",
+    )
+    return jsonify({"ok": True, "config": status, "msg": "Push sent — check your LINE"})
+
+
 
 
 @app.route("/test_detect", methods=["GET"])
