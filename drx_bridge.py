@@ -18,6 +18,13 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# โหลด .env (local dev)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass
+
 try:
     import requests
     from bs4 import BeautifulSoup
@@ -183,24 +190,52 @@ def fetch_cases(session, rows=100) -> list:
     return result.get("rows", [])
 
 
-def fetch_opd_active(session) -> list:
-    """dda=pet&op=5108 → OPD ที่กำลัง active วันนี้"""
+def _fetch_checked_pet(session, filter_id: int, rows: int = 50) -> list:
+    """ฐาน: dda=pet&op=5108 — รายการเคสตามตัวกรอง
+    filter_id reference (จาก dashboard DRX):
+       1 = วันนี้ทั้งหมด (รวมทุกประเภท)
+       2 = ล่าสุด
+       4 = สัตว์ป่วยนอก OPD (กำลังตรวจ)
+       5 = สัตว์ป่วยใน Admit (ค้างคืน)
+       7 = ทั้งหมด
+       9 = อาบน้ำ-ตัดขน
+    """
     today = int(time.time())
     result = api_post(session, {
         "dda": "pet",
-        "op": "5108",
-        "checked_pet_filter_id": "6",
+        "op":  "5108",
+        "checked_pet_filter_id":    str(filter_id),
         "checked_pet_add_date_value": "",
         "_search": "false",
-        "nd": str(today * 1000),
-        "rows": "50",
+        "nd":   str(today * 1000),
+        "rows": str(rows),
         "page": "1",
         "sidx": "checked_pet_modify_datetime",
         "sord": "desc",
     })
     if not result:
         return []
-    return result.get("rows", [])
+    return result.get("rows", []) if isinstance(result, dict) else []
+
+
+def fetch_opd_active(session) -> list:
+    """สัตว์ป่วยนอก OPD — กำลังตรวจอยู่"""
+    return _fetch_checked_pet(session, filter_id=4)
+
+
+def fetch_admit_active(session) -> list:
+    """สัตว์ป่วยใน Admit — ค้างคืน รพ."""
+    return _fetch_checked_pet(session, filter_id=5)
+
+
+def fetch_grooming_active(session) -> list:
+    """อาบน้ำ-ตัดขน — กำลังให้บริการ"""
+    return _fetch_checked_pet(session, filter_id=9)
+
+
+def fetch_today_cases(session) -> list:
+    """เคสวันนี้ทั้งหมด (ทุกประเภท)"""
+    return _fetch_checked_pet(session, filter_id=1)
 
 
 def fetch_appointments(session, rows=100) -> list:
@@ -711,6 +746,9 @@ def main():
     raw_summary      = step("summary stats",        fetch_summary)
     raw_cases        = step("cases (OPD)",           fetch_cases,         rows=200)
     raw_opd_active   = step("OPD active today",      fetch_opd_active)
+    raw_admit        = step("Admit (overnight)",     fetch_admit_active)
+    raw_grooming     = step("Grooming today",        fetch_grooming_active)
+    raw_today_cases  = step("Today cases (all)",     fetch_today_cases)
     raw_appointments = step("appointments (grid)",   fetch_appointments,  rows=200)
     raw_calendar     = step("calendar events",       fetch_calendar)
     raw_stock        = step("stock list (paged)",    fetch_stock, max_pages=3)
@@ -769,6 +807,9 @@ def main():
             "summary":         raw_summary,
             "cases":           raw_cases,
             "opd_active":      raw_opd_active,
+            "admit":           raw_admit,
+            "grooming":        raw_grooming,
+            "today_cases":     raw_today_cases,
             "appointments":    raw_appointments,
             "calendar":        raw_calendar,
             "stock":           raw_stock[:5] if raw_stock else [],

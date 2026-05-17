@@ -1051,6 +1051,41 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
             # ไม่ใช่ตัวเลข → reset menu แล้ว fall-through หาคำถามใหม่
             sess["menu_node"] = None
 
+    # ── 2.5 Candidates fast-path — ถ้ามี candidates ค้างและ user ส่งเลข/ใช่/ไม่ใช่
+    #         ให้ตอบจาก candidates โดยตรง (ไม่ผ่าน AI agent)
+    #         ป้องกัน AI classify "2" หรือ "ใช่" เป็น handoff
+    if sess.get("candidates"):
+        cands = sess["candidates"]
+        early_choice = qa.parse_choice_number(user_text)
+        if early_choice is not None:
+            if 1 <= early_choice <= len(cands):
+                qa_obj = cands[early_choice - 1]
+                reset_session(user_id)
+                log.info(f"[{user_id}] candidates fast-path choice={early_choice} qa_id={qa_obj.get('id')}")
+                return build_answer_reply(qa_obj)
+            elif early_choice == len(cands) + 1:
+                sess["candidates"] = []
+                sess["handed_off"] = True
+                log.info(f"[{user_id}] candidates fast-path → handoff (chose last option)")
+                notify_admin_unanswered(user_id, user_text, "")
+                return {"text": CONTACT_STAFF_MSG, "images": []}
+            else:
+                return {"text": f"ขออภัยค่ะ เลือกเลข 1-{len(cands)+1} นะคะ", "images": []}
+        # ใช่ → ตอบ candidate แรก (single confirm flow)
+        if qa.is_affirmative(user_text):
+            qa_obj = cands[0]
+            reset_session(user_id)
+            log.info(f"[{user_id}] candidates fast-path affirm qa_id={qa_obj.get('id')}")
+            return build_answer_reply(qa_obj)
+        # ไม่ใช่ → handoff
+        if qa.is_negative(user_text):
+            sess["candidates"] = []
+            sess["handed_off"] = True
+            log.info(f"[{user_id}] candidates fast-path negative → handoff")
+            notify_admin_unanswered(user_id, user_text, "")
+            return {"text": CONTACT_STAFF_MSG, "images": []}
+        # อื่นๆ → fall through ไปค้นใหม่ (AI/keyword)
+
     # ── 3. AI Agent (ลำดับแรก — ตอบทั้ง KB mode และ Free mode) ──
     try:
         import ai_agent
@@ -1099,33 +1134,10 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         log.info(f"[{user_id}] menu trigger → {menu_key}")
         return {"text": build_menu_message(menu_key, platform), "images": []}
 
-    # ── 5. Candidates (regular QA flow) ──
-    if sess["candidates"]:
-        choice = qa.parse_choice_number(user_text)
-        if choice is not None:
-            if 1 <= choice <= len(sess["candidates"]):
-                qa_obj = sess["candidates"][choice - 1]
-                reset_session(user_id)
-                return build_answer_reply(qa_obj)
-            elif choice == len(sess["candidates"]) + 1:
-                sess["candidates"] = []
-                sess["handed_off"] = True
-                notify_admin_unanswered(user_id, user_text, ai_draft)
-                return {"text": CONTACT_STAFF_MSG, "images": []}
-            else:
-                return {"text": f"ขออภัยค่ะ เลือกเลข 1-{len(sess['candidates'])+1} นะคะ", "images": []}
-
-        if qa.is_affirmative(user_text):
-            qa_obj = sess["candidates"][0]
-            reset_session(user_id)
-            return build_answer_reply(qa_obj)
-
-        if qa.is_negative(user_text):
-            sess["candidates"] = []
-            sess["handed_off"] = True
-            notify_admin_unanswered(user_id, user_text, ai_draft)
-            return {"text": CONTACT_STAFF_MSG, "images": []}
-        # ตอบนอกเหนือ → fall through ค้นใหม่
+    # ── 5. Candidates flow: user ไม่ได้ตอบเลข/ใช่/ไม่ใช่
+    #         (step 2.5 จัดการกรณีตอบตรงแล้ว — ที่ตกถึงนี่คือ user พิมพ์อย่างอื่น)
+    if sess.get("candidates"):
+        # ค้นหาใหม่ — clear candidates เก่า
         sess["candidates"] = []
 
     # ── 6. KB medium confidence fallback ──

@@ -123,144 +123,177 @@ CAT_ICONS = {
 def fmt_baht(n) -> str:
     return f"฿{float(n):,.0f}"
 
+def _parse_pet_owner(cell_str: str) -> tuple[str, str]:
+    """แยก 'petname/ownername' → (pet, owner)"""
+    s = str(cell_str or "").strip()
+    if "/" in s:
+        parts = s.split("/", 1)
+        return parts[0].strip(), parts[1].strip()
+    return s, "ไม่ระบุ"
+
+
+def _extract_pet_list(raw_rows: list) -> list[dict]:
+    """แปลง raw rows (op=5108) → [{time, pet, owner, hn, status, vet}]"""
+    out = []
+    for row in raw_rows or []:
+        if not isinstance(row, dict):
+            continue
+        cells = row.get("cell", [])
+        if len(cells) < 4:
+            continue
+        pet, owner = _parse_pet_owner(cells[1] if len(cells) > 1 else "")
+        out.append({
+            "time":   str(cells[0]) if cells else "",
+            "pet":    pet,
+            "owner":  owner,
+            "hn":     str(cells[2]) if len(cells) > 2 else "",
+            "status": str(cells[3]) if len(cells) > 3 else "",
+            "vet":    str(cells[4]) if len(cells) > 4 else "",
+        })
+    return out
+
+
 def build_message(data: dict) -> str:
     dr     = data.get("daily_revenue", {})
-    cases  = data.get("cases", [])
     stock  = data.get("stock", [])
     raw    = data.get("_raw", {})
+    appts  = data.get("appointments", [])
 
     # ──────────────────────────────────────────────
-    # 1. รายรับสุทธิ
+    # 1. การเงิน — ใช้ received_total (รวมมัดจำ) ตามที่ DRX แสดง "ยอดรายรับสุทธิ รวม"
     # ──────────────────────────────────────────────
-    net_revenue    = float(dr.get("net_revenue", 0))
-    received_total = float(dr.get("received_total", 0))
-    bill_total     = float(dr.get("bill_total", 0))
+    received_total = float(dr.get("received_total", 0))   # 1,690 — รวมทุกช่องชำระ
+    bill_total     = float(dr.get("bill_total", 0))       # 690 — ค่าบริการ (ไม่รวมมัดจำ)
     total_cost     = float(dr.get("total_cost", 0))
     bill_count     = int(dr.get("bill_count", 0))
     voided_count   = int(dr.get("voided_count", 0))
     cash           = float(dr.get("cash", 0))
-    transfer       = float(dr.get("transfer", 0))      # โอนเงินค่าตรวจ
-    deposit        = float(dr.get("deposit", 0))        # มัดจำทั้งหมด
-    dep_transfer   = float(dr.get("deposit_transfer", 0))  # มัดจำผ่านโอน
+    transfer       = float(dr.get("transfer", 0))         # โอนค่าบริการ
+    credit         = float(dr.get("credit", 0))
+    debit          = float(dr.get("debit", 0))
+    deposit        = float(dr.get("deposit", 0))          # มัดจำเงินสด
+    dep_transfer   = float(dr.get("deposit_transfer", 0)) # มัดจำผ่านโอน
 
-    gross_margin = (net_revenue - total_cost) / net_revenue * 100 if net_revenue > 0 else 0
+    # กำไรสุทธิ = ยอดรายรับสุทธิรวม − ต้นทุน (ตาม DRX แสดง)
+    if received_total > 0:
+        net_profit   = received_total - total_cost
+        gross_margin = net_profit / received_total * 100
+    else:
+        gross_margin = 0
+        net_profit   = 0
 
     # ──────────────────────────────────────────────
-    # 2. หมวดหมู่
+    # 2. หมวดหมู่รายรับ
     # ──────────────────────────────────────────────
     categories = dr.get("categories", [])
 
     # ──────────────────────────────────────────────
-    # 3. เคสวันนี้  — ใช้ date จาก daily_revenue เป็นหลัก
+    # 3. รายการเคสจาก DRX dashboard (op=5108)
     # ──────────────────────────────────────────────
-    # หา pattern วันที่จาก daily_revenue.date เช่น "14 พ.ค. 2569 เวลา 18:51"
-    dr_date_str = dr.get("date", "")    # เช่น "14 พ.ค. 2569 เวลา 18:51"
-    # ดึง "14 พ.ค." จาก date string นั้น
-    import re as _re
-    m = _re.search(r"(\d+\s+[ก-ฮ]+\.)", dr_date_str)
-    report_day_pfx = m.group(1) if m else today_pattern()
+    opd_list     = _extract_pet_list(raw.get("opd_active", []))   # filter_id=4
+    admit_list   = _extract_pet_list(raw.get("admit", []))         # filter_id=5
+    groom_list   = _extract_pet_list(raw.get("grooming", []))      # filter_id=9
+    today_list   = _extract_pet_list(raw.get("today_cases", []))   # filter_id=1
 
-    today_cases  = [c for c in cases if report_day_pfx in c.get("date", "")]
-    done_cases   = [c for c in today_cases if c.get("status") == "done"]
-    active_cases = [c for c in today_cases if c.get("status") == "active"]
-    followup     = [c for c in today_cases if c.get("status") == "followup"]
-
-    # ใช้ bill_count จาก daily_revenue เป็น fallback (แม่นกว่า)
-    total_today = bill_count if bill_count > 0 else len(today_cases)
+    # นับ "เสร็จ" จาก status text ที่มีคำว่า ชำระ/รับยา
+    done_count = sum(
+        1 for c in today_list
+        if "ชำระ" in c["status"] or "รับยา" in c["status"]
+    )
 
     # ──────────────────────────────────────────────
-    # 4. เคสค้างคืน (Admit / Inpatient)
+    # 4. นัดหมายวันนี้ (จาก mapped appointments)
     # ──────────────────────────────────────────────
-    # DRX ส่ง admit cases ผ่าน _raw.opd_active ถ้ามี
-    opd_active_raw = raw.get("opd_active", []) or []
-    admit_list = []
-    for row in opd_active_raw:
-        if isinstance(row, dict):
-            cells = row.get("cell", [])
-            if cells and len(cells) >= 3:
-                admit_list.append({
-                    "pet":   str(cells[1]).split("/")[0].strip() if "/" in str(cells[1]) else str(cells[1]),
-                    "owner": str(cells[1]).split("/")[1].strip() if "/" in str(cells[1]) else "ไม่ระบุ",
-                    "since": str(cells[0]),
-                })
+    today_iso     = datetime.now().strftime("%Y-%m-%d")
+    today_appts   = [a for a in appts if a.get("date") == today_iso]
 
     # ──────────────────────────────────────────────
-    # 5. สต็อกใกล้หมด / หมดแล้ว
+    # 5. สต็อก
     # ──────────────────────────────────────────────
-    low_items = [s for s in stock if s.get("level") == "low"]
-    out_items = [s for s in stock if s.get("level") == "out"]
-    stock_tracked = any(s.get("qty", 0) > 0 for s in stock)  # ระบบติดตามสต็อกจริงไหม
+    low_items     = [s for s in stock if s.get("level") == "low"]
+    stock_tracked = any(s.get("qty", 0) > 0 for s in stock)
 
     # ──────────────────────────────────────────────
     # BUILD MESSAGE
     # ──────────────────────────────────────────────
     SEP = "━" * 17
-
-    # วันที่ในข้อความ: ถ้ามี daily_revenue.date ให้ใช้ของนั้น (วันที่รายงาน)
-    report_date_display = dr_date_str if dr_date_str else thai_now()
+    dr_date_str = dr.get("date", "") or thai_now()
 
     lines = [
         "📊 สรุปประจำวัน",
         "🏥 Dog and Cat Lovely",
-        f"📅 {report_date_display}",
+        f"📅 {dr_date_str}",
         SEP,
         "",
-        "💰 รายรับสุทธิ",
-        f"    {fmt_baht(net_revenue)} บาท",
-        f"    (กำไรขั้นต้น {gross_margin:.1f}% / ต้นทุน {fmt_baht(total_cost)})",
-        "",
-        "📦 รายละเอียดตามหมวดหมู่",
+        "💰 รายรับสุทธิรวม",
+        f"    {fmt_baht(received_total)} บาท",
     ]
-
-    for cat in categories:
-        val = float(cat.get("value", 0))
-        if val > 0:
-            label = cat.get("label", "")
-            icon  = CAT_ICONS.get(label, "📌")
-            lines.append(f"  {icon} {label}")
-            lines.append(f"      {fmt_baht(val)} บาท")
-
-    lines += [
-        "",
-        SEP,
-        f"🏥 เคสวันนี้: {total_today} เคส",
-        f"  ✅ เสร็จชำระแล้ว: {len(done_cases)} ราย",
-        f"  🔄 อยู่ระหว่างรักษา: {len(active_cases)} ราย",
-    ]
-    if followup:
-        lines.append(f"  📅 นัดติดตาม: {len(followup)} ราย")
-
-    lines.append("")
-
-    if admit_list:
-        lines.append(f"🛏️ เคสค้างคืน (Admit): {len(admit_list)} ตัว")
-        for a in admit_list[:5]:
-            lines.append(f"  • {a['pet']} (เจ้าของ: {a['owner']})")
-        if len(admit_list) > 5:
-            lines.append(f"  ... และอีก {len(admit_list)-5} ตัว")
-    else:
-        lines.append("🛏️ เคสค้างคืน: ไม่มีคืนนี้")
-
-    lines += [
-        "",
-        SEP,
-        "💳 ช่องทางชำระเงิน",
-        f"  💵 เงินสด:     {fmt_baht(cash)}",
-        f"  📱 โอนเงิน:    {fmt_baht(transfer)}",
-    ]
+    # แสดง breakdown ถ้ามีมัดจำ
     if deposit > 0:
-        lines.append(f"  🔒 รับมัดจำ:   {fmt_baht(deposit)}")
-    lines += [
-        f"  📃 จำนวนบิล:  {bill_count} ใบ",
-    ]
-    if voided_count > 0:
-        lines.append(f"  🗑️ ยกเลิก:      {voided_count} ใบ")
+        lines.append(f"    (ค่าบริการ {fmt_baht(bill_total)} + รับมัดจำ {fmt_baht(deposit)})")
+    if received_total > 0:
+        lines.append(f"    กำไรสุทธิ {fmt_baht(net_profit)} ({gross_margin:.1f}%) • ต้นทุน {fmt_baht(total_cost)}")
 
-    # Stock section
+    # หมวดหมู่
+    if categories:
+        lines += ["", "📦 รายละเอียดตามหมวดหมู่"]
+        for cat in categories:
+            val = float(cat.get("value", 0))
+            if val > 0:
+                label = cat.get("label", "")
+                icon  = CAT_ICONS.get(label, "📌")
+                lines.append(f"  {icon} {label}: {fmt_baht(val)}")
+
+    # ──────────────────────────────────────────────
+    # เคสวันนี้
+    # ──────────────────────────────────────────────
+    lines += ["", SEP, "🐾 สรุปเคสวันนี้"]
+    lines.append(f"  📅 นัดหมายวันนี้:    {len(today_appts)} ราย")
+    lines.append(f"  ✅ ตรวจเสร็จ-ชำระแล้ว: {done_count} ราย")
+    if opd_list:
+        lines.append(f"  🟢 OPD กำลังตรวจ:    {len(opd_list)} ราย")
+        for c in opd_list[:3]:
+            lines.append(f"      • {c['pet']} ({c['time']})")
+    if groom_list:
+        lines.append(f"  🛁 อาบน้ำ-ตัดขน:     {len(groom_list)} ราย")
+        for c in groom_list[:3]:
+            lines.append(f"      • {c['pet']} ({c['time']})")
+
+    # ──────────────────────────────────────────────
+    # Admit (ค้างคืน)
+    # ──────────────────────────────────────────────
+    lines += ["", SEP]
+    if admit_list:
+        lines.append(f"🛏️ สัตว์ป่วยใน Admit: {len(admit_list)} ตัว")
+        for a in admit_list[:6]:
+            lines.append(f"  • {a['pet']} (เจ้าของ: {a['owner']}) — {a['vet']}")
+        if len(admit_list) > 6:
+            lines.append(f"  ... และอีก {len(admit_list)-6} ตัว")
+    else:
+        lines.append("🛏️ สัตว์ป่วยใน Admit: ไม่มี")
+
+    # ──────────────────────────────────────────────
+    # ช่องทางชำระเงิน
+    # ──────────────────────────────────────────────
+    lines += ["", SEP, "💳 ช่องทางชำระเงิน"]
+    lines.append(f"  💵 เงินสด:    {fmt_baht(cash)}")
+    if transfer > 0:
+        lines.append(f"  📱 โอน:       {fmt_baht(transfer)}")
+    if (credit + debit) > 0:
+        lines.append(f"  💳 บัตร:      {fmt_baht(credit + debit)}")
+    if deposit > 0:
+        lines.append(f"  🔒 รับมัดจำ:  {fmt_baht(deposit)}")
+    lines.append(f"  📃 จำนวนบิล:  {bill_count} ใบ")
+    if voided_count > 0:
+        lines.append(f"  🗑️ ยกเลิก:    {voided_count} ใบ")
+
+    # ──────────────────────────────────────────────
+    # สต็อก
+    # ──────────────────────────────────────────────
     lines += ["", SEP]
     if not stock_tracked:
         lines.append("📦 สต็อก: ระบบ DRX ไม่ได้บันทึกปริมาณ")
-        lines.append("   (กรุณาตรวจสอบสต็อกในระบบโดยตรง)")
+        lines.append("   (กรุณาตรวจในระบบโดยตรง)")
     elif low_items:
         lines.append(f"⚠️ ยา/อุปกรณ์ใกล้หมด ({len(low_items)} รายการ)")
         for s in low_items[:8]:
@@ -272,15 +305,15 @@ def build_message(data: dict) -> str:
         lines.append("✅ สต็อกปกติ ไม่มีรายการใกล้หมด")
 
     lines += ["", SEP, "🐾 Dog and Cat Lovely Pet Hospital"]
-
     return "\n".join(lines)
 
 
 # ============================================================
 #  LINE API
 # ============================================================
-def send_line_push(token: str, target_id: str, text: str) -> bool:
-    """ส่ง push message ไปยัง LINE User/Group"""
+def send_line_push(token: str, target_id: str, text: str, max_retries: int = 3) -> bool:
+    """ส่ง push message ไปยัง LINE User/Group พร้อม retry เมื่อ network/DNS fail"""
+    import time as _time
     url = "https://api.line.me/v2/bot/message/push"
     headers = {
         "Content-Type":  "application/json",
@@ -290,14 +323,31 @@ def send_line_push(token: str, target_id: str, text: str) -> bool:
         "to":       target_id,
         "messages": [{"type": "text", "text": text}],
     }
-    r = requests.post(url, headers=headers, json=payload, timeout=15)
-    if r.status_code == 200:
-        print("✅ ส่ง LINE สำเร็จ!")
-        return True
-    else:
-        print(f"❌ ส่งไม่สำเร็จ: HTTP {r.status_code}")
-        print(f"   Response: {r.text[:300]}")
-        return False
+    last_err = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            r = requests.post(url, headers=headers, json=payload, timeout=15)
+            if r.status_code == 200:
+                print(f"✅ ส่ง LINE สำเร็จ! (attempt {attempt})")
+                return True
+            else:
+                last_err = f"HTTP {r.status_code} — {r.text[:200]}"
+                print(f"❌ attempt {attempt}: {last_err}")
+                # 4xx errors ไม่ต้อง retry
+                if 400 <= r.status_code < 500:
+                    return False
+        except requests.exceptions.ConnectionError as e:
+            last_err = f"ConnectionError: {str(e)[:120]}"
+            print(f"⚠️  attempt {attempt}/{max_retries}: {last_err}")
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {e}"
+            print(f"⚠️  attempt {attempt}/{max_retries}: {last_err}")
+        if attempt < max_retries:
+            wait = attempt * 10   # 10s, 20s, ...
+            print(f"   รอ {wait}s แล้ว retry ...")
+            _time.sleep(wait)
+    print(f"❌ ส่ง LINE ล้มเหลว ({max_retries} ครั้ง) — {last_err}")
+    return False
 
 
 def send_line_broadcast(token: str, text: str) -> bool:
