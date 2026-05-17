@@ -1211,44 +1211,6 @@ def test_response(intent: str):
     })
 
 
-@app.route("/debug_env", methods=["GET"])
-def debug_env():
-    """ตรวจ env vars ที่โหลดอยู่ (token prefix เท่านั้น ไม่แสดงค่าเต็ม)"""
-    import requests as _req
-    token = LINE_CHANNEL_ACCESS_TOKEN
-    secret = LINE_CHANNEL_SECRET
-    # ทดสอบ token กับ LINE API
-    try:
-        r = _req.get("https://api.line.me/v2/bot/info",
-                     headers={"Authorization": f"Bearer {token}"}, timeout=5)
-        bot_info = r.json()
-    except Exception as e:
-        bot_info = {"error": str(e)}
-    return jsonify({
-        "LINE_TOKEN_prefix": token[:20] + "..." if token else "EMPTY",
-        "LINE_SECRET_prefix": secret[:8] + "..." if secret else "EMPTY",
-        "bot_info": bot_info,
-    })
-
-
-@app.route("/debug_last_error", methods=["GET"])
-def debug_last_error():
-    """ดู error ล่าสุดจาก LINE Reply API"""
-    return jsonify(_last_line_error)
-
-
-@app.route("/debug_qa", methods=["GET"])
-def debug_qa():
-    """ตรวจสอบ QA list ที่โหลดได้"""
-    qa_id = request.args.get("id", type=int)
-    if qa_id:
-        item = qa.find_by_id(qa_id)
-        return jsonify({"qa_id": qa_id, "found": item is not None,
-                        "label": item["label"] if item else None,
-                        "answer_len": len(item["answer"]) if item else 0,
-                        "images": item["images"] if item else []})
-    return jsonify({"total_qa": len(qa.QA_LIST),
-                    "ids": [q["id"] for q in qa.QA_LIST]})
 
 
 @app.route("/test_detect", methods=["GET"])
@@ -1304,21 +1266,6 @@ try:
         log.warning("Daily summary scheduler not started (missing deps?)")
 except Exception as _e:
     log.warning(f"Could not start scheduler: {_e}")
-
-
-@app.route("/debug_scheduler", methods=["GET"])
-def debug_scheduler():
-    """ดู scheduled jobs"""
-    if not _scheduler_instance:
-        return jsonify({"running": False, "jobs": []})
-    jobs = []
-    for job in _scheduler_instance.get_jobs():
-        jobs.append({
-            "id":        job.id,
-            "name":      job.name,
-            "next_run":  str(job.next_run_time) if job.next_run_time else None,
-        })
-    return jsonify({"running": True, "jobs": jobs, "tz": str(_scheduler_instance.timezone)})
 
 
 @app.route("/run_summary_now", methods=["GET"])
