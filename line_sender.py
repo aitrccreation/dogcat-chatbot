@@ -153,7 +153,7 @@ def _extract_pet_list(raw_rows: list) -> list[dict]:
     return out
 
 
-def build_message(data: dict) -> str:
+def build_message(data: dict, include_stock: bool = False) -> str:
     dr     = data.get("daily_revenue", {})
     stock  = data.get("stock", [])
     raw    = data.get("_raw", {})
@@ -288,42 +288,42 @@ def build_message(data: dict) -> str:
         lines.append(f"  🗑️ ยกเลิก:    {voided_count} ใบ")
 
     # ──────────────────────────────────────────────
-    # สต็อก "ใกล้หมด" จาก DRX op=590 + stock_alert_filter_id=1
+    # สต็อก "ใกล้หมด" — แสดงเฉพาะเมื่อ include_stock=True (รอบ 20:20)
     # ──────────────────────────────────────────────
-    lines += ["", SEP]
-    low_stock_rows = raw.get("low_stock", []) or []
+    if include_stock:
+        lines += ["", SEP]
+        low_stock_rows = raw.get("low_stock", []) or []
 
-    if low_stock_rows:
-        # group ตามหมวด (cell[17])
-        from collections import defaultdict as _dd
-        by_cat = _dd(list)
-        for row in low_stock_rows:
-            cells = row.get("cell", []) if isinstance(row, dict) else []
-            if len(cells) < 18:
-                continue
-            name      = cells[1]
-            qty_unit  = cells[2]   # "30.0 เม็ด"
-            category  = cells[17]  # "รายการยา"
-            by_cat[category].append((name, qty_unit))
+        if low_stock_rows:
+            from collections import defaultdict as _dd
+            by_cat = _dd(list)
+            for row in low_stock_rows:
+                cells = row.get("cell", []) if isinstance(row, dict) else []
+                if len(cells) < 18:
+                    continue
+                name      = cells[1]
+                qty_unit  = cells[2]   # "30.0 เม็ด"
+                category  = cells[17]  # "รายการยา"
+                by_cat[category].append((name, qty_unit))
 
-        total = len(low_stock_rows)
-        lines.append(f"⚠️ สต็อกใกล้หมด: {total} รายการ")
-        for cat in sorted(by_cat.keys()):
-            items = by_cat[cat]
-            lines.append(f"")
-            lines.append(f"📁 {cat} ({len(items)} รายการ)")
-            for name, qty_unit in items[:12]:
-                lines.append(f"  • {name[:40]} — เหลือ {qty_unit}")
-            if len(items) > 12:
-                lines.append(f"  ... และอีก {len(items)-12} รายการ")
-    else:
-        lines.append("✅ สต็อกปกติ ไม่มีรายการใกล้หมด")
+            total = len(low_stock_rows)
+            lines.append(f"⚠️ สต็อกใกล้หมด: {total} รายการ")
+            for cat in sorted(by_cat.keys()):
+                items = by_cat[cat]
+                lines.append("")
+                lines.append(f"📁 {cat} ({len(items)} รายการ)")
+                for name, qty_unit in items[:12]:
+                    lines.append(f"  • {name[:40]} — เหลือ {qty_unit}")
+                if len(items) > 12:
+                    lines.append(f"  ... และอีก {len(items)-12} รายการ")
+        else:
+            lines.append("✅ สต็อกปกติ ไม่มีรายการใกล้หมด")
 
-    lines += [
-        "",
-        "🔗 ดูเต็มในระบบ DRX:",
-        "   http://dogcatlovely.thddns.net:8080/doctordogs/stock?type=-1",
-    ]
+        lines += [
+            "",
+            "🔗 ดูเต็มในระบบ DRX:",
+            "   http://dogcatlovely.thddns.net:8080/doctordogs/stock?type=-1",
+        ]
 
     lines += ["", SEP, "🐾 Dog and Cat Lovely Pet Hospital"]
     return "\n".join(lines)
@@ -397,8 +397,20 @@ def main():
     do_send   = "--send"  in args
     broadcast = "--broadcast" in args
 
+    # ── Stock section logic ──
+    # ✅ default: รวมเฉพาะรอบ 20:00-20:59 (รอบ 20:20 อัตโนมัติ)
+    # ✅ --with-stock = force รวม
+    # ✅ --no-stock   = force ไม่รวม
+    if "--with-stock" in args:
+        include_stock = True
+    elif "--no-stock" in args:
+        include_stock = False
+    else:
+        include_stock = (datetime.now().hour == 20)
+
     print("=" * 45)
     print("  📊 LINE Daily Summary — Dog and Cat Lovely")
+    print(f"  Stock section: {'ON' if include_stock else 'OFF (เฉพาะรอบ 20:xx)'}")
     print("=" * 45)
 
     # โหลดข้อมูล
@@ -408,7 +420,7 @@ def main():
         data = load_data()
 
     # สร้างข้อความ
-    msg = build_message(data)
+    msg = build_message(data, include_stock=include_stock)
 
     # บันทึก preview
     SUMMARY_FILE.write_text(msg, encoding="utf-8")
