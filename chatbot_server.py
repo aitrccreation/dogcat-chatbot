@@ -944,7 +944,7 @@ def build_menu_message(menu_key: str, platform: str = "line") -> str:
 # ── Handoff cooldown ──
 # เมื่อบอทตอบไม่ได้ → handoff → พนักงานต้องคุยต่อ
 # บอทเงียบ X วินาที เพื่อไม่ขัดจังหวะ แล้ว auto-resume เพื่อให้ลูกค้ารายอื่นใช้บอทได้
-HANDOFF_COOLDOWN_SEC = int(os.environ.get("HANDOFF_COOLDOWN_SEC", "7200"))  # default 2 ชม.
+HANDOFF_COOLDOWN_SEC = int(os.environ.get("HANDOFF_COOLDOWN_SEC", "43200"))  # default 12 ชม.
 
 # ── Silent handoff ──
 # True (default) → ถ้าคำถามไม่ชัดเจน บอทเงียบไม่ตอบเลย (notify admin เงียบๆ)
