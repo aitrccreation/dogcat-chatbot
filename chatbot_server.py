@@ -946,6 +946,24 @@ def build_menu_message(menu_key: str, platform: str = "line") -> str:
 # บอทเงียบ X วินาที เพื่อไม่ขัดจังหวะ แล้ว auto-resume เพื่อให้ลูกค้ารายอื่นใช้บอทได้
 HANDOFF_COOLDOWN_SEC = int(os.environ.get("HANDOFF_COOLDOWN_SEC", "7200"))  # default 2 ชม.
 
+# ── Silent handoff ──
+# True (default) → ถ้าคำถามไม่ชัดเจน บอทเงียบไม่ตอบเลย (notify admin เงียบๆ)
+# False         → ตอบ "ติดต่อพนักงาน" เหมือนเดิม
+SILENT_HANDOFF = os.environ.get("SILENT_HANDOFF", "true").lower() != "false"
+
+
+def handoff_silently(sess: dict, user_id: str, user_text: str, draft: str = ""):
+    """Helper: ตั้ง handoff cooldown + แจ้ง admin โดยไม่ตอบลูกค้า
+    Return reply dict (CONTACT_STAFF_MSG) ถ้า SILENT_HANDOFF=False, None ถ้าเงียบ
+    """
+    sess["candidates"] = []
+    set_handoff(sess)
+    notify_admin_unanswered(user_id, user_text, draft)
+    if SILENT_HANDOFF:
+        log.info(f"[{user_id}] silent handoff — no reply to user")
+        return None
+    return {"text": CONTACT_STAFF_MSG, "images": []}
+
 
 def get_session(user_id: str) -> dict:
     if user_id not in _user_sessions:
@@ -1087,10 +1105,8 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                             return build_answer_reply(qa_obj)
                         return {"text": NO_MATCH_MSG, "images": []}
                 elif choice == n + 1:
-                    # ติดต่อพนักงาน
-                    reset_session(user_id)
-                    set_handoff(sess)
-                    return {"text": CONTACT_STAFF_MSG, "images": []}
+                    # ติดต่อพนักงาน — user ขอเอง (explicit) จึงตอบยืนยัน ไม่นับว่า "ไม่ชัดเจน"
+                    return handoff_silently(sess, user_id, user_text)
                 else:
                     return {"text": f"กรุณาเลือกเลข 1-{n+1} ค่ะ", "images": []}
             # ไม่ใช่ตัวเลข → reset menu แล้ว fall-through หาคำถามใหม่
@@ -1109,11 +1125,8 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                 log.info(f"[{user_id}] candidates fast-path choice={early_choice} qa_id={qa_obj.get('id')}")
                 return build_answer_reply(qa_obj)
             elif early_choice == len(cands) + 1:
-                sess["candidates"] = []
-                set_handoff(sess)
                 log.info(f"[{user_id}] candidates fast-path → handoff (chose last option)")
-                notify_admin_unanswered(user_id, user_text, "")
-                return {"text": CONTACT_STAFF_MSG, "images": []}
+                return handoff_silently(sess, user_id, user_text)
             else:
                 return {"text": f"ขออภัยค่ะ เลือกเลข 1-{len(cands)+1} นะคะ", "images": []}
         # ใช่ → ตอบ candidate แรก (single confirm flow)
@@ -1122,13 +1135,10 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
             reset_session(user_id)
             log.info(f"[{user_id}] candidates fast-path affirm qa_id={qa_obj.get('id')}")
             return build_answer_reply(qa_obj)
-        # ไม่ใช่ → handoff
+        # ไม่ใช่ → handoff (เงียบ)
         if qa.is_negative(user_text):
-            sess["candidates"] = []
-            set_handoff(sess)
             log.info(f"[{user_id}] candidates fast-path negative → handoff")
-            notify_admin_unanswered(user_id, user_text, "")
-            return {"text": CONTACT_STAFF_MSG, "images": []}
+            return handoff_silently(sess, user_id, user_text)
         # อื่นๆ → fall through ไปค้นใหม่ (AI/keyword)
 
     # ── 3. AI Agent (ลำดับแรก — ตอบทั้ง KB mode และ Free mode) ──
@@ -1164,12 +1174,10 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                     "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
                 }
 
-        # ── 3c. AI handoff — แจ้ง admin ทันที ──
+        # ── 3c. AI handoff — แจ้ง admin เงียบๆ ไม่ตอบลูกค้า ──
         if ai_mode == "handoff":
             reset_session(user_id)
-            set_handoff(sess)
-            notify_admin_unanswered(user_id, user_text, ai_draft)
-            return {"text": CONTACT_STAFF_MSG, "images": []}
+            return handoff_silently(sess, user_id, user_text, ai_draft)
 
     # ── 4. Menu trigger detection (สำหรับคำสั้นๆ เช่น "ทำหมัน", "วัคซีน") ──
     menu_key = detect_menu_trigger(user_text)
@@ -1199,9 +1207,8 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     # ── 7. Last-resort: Keyword search ──
     candidates = qa.find_candidates(user_text, top_k=4)
     if not candidates:
-        set_handoff(sess)
-        notify_admin_unanswered(user_id, user_text, ai_draft)
-        return {"text": NO_MATCH_MSG, "images": []}
+        # ไม่เจอ keyword match → คำถามไม่ชัดเจน → เงียบ
+        return handoff_silently(sess, user_id, user_text, ai_draft)
 
     if len(candidates) == 1:
         sess["candidates"] = candidates
