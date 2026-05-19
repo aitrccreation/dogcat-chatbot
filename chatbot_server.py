@@ -1258,9 +1258,12 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
                 "images": [],
             }
 
-        # verify ใน DRX
+        # verify ใน DRX (optional — ถ้าไม่มี drx_data.json ให้รับ HN ได้เลย)
         info = adb.verify_hn_with_drx(hn)
-        if not info:
+        drx_available = (Path(__file__).parent / "drx_data.json").exists()
+
+        if drx_available and not info:
+            # มีไฟล์ DRX แต่ไม่เจอ HN → แจ้งให้ตรวจสอบ
             return {
                 "text": (
                     f"❓ ไม่พบ HN {hn} ในระบบค่ะ\n"
@@ -1271,6 +1274,9 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
                 ),
                 "images": [],
             }
+        # ไม่มีไฟล์ DRX (Railway) → รับ HN ได้เลย ไม่บล็อก
+        if not info:
+            info = {}
 
         # save mapping
         adb.register_customer(
@@ -1280,13 +1286,23 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
             pet_name=info.get("pet_name", ""),
         )
         sess["register_step"] = None
+
+        owner_txt = info.get("owner_name") or "-"
+        pet_txt   = info.get("pet_name")   or "-"
+        detail    = (
+            f"  HN: {hn}\n"
+            f"  เจ้าของ: {owner_txt}\n"
+            f"  น้อง: {pet_txt}\n\n"
+        ) if info.get("owner_name") else (
+            f"  HN: {hn}\n\n"
+            "📌 เจ้าหน้าที่จะอัปเดตชื่อเจ้าของและน้องในระบบภายหลังค่ะ\n\n"
+        )
+
         return {
             "text": (
                 "✅ ลงทะเบียนเรียบร้อยค่ะ!\n"
                 "━━━━━━━━━━━━━━━━━\n\n"
-                f"  HN: {hn}\n"
-                f"  เจ้าของ: {info.get('owner_name') or '-'}\n"
-                f"  น้อง: {info.get('pet_name') or '-'}\n\n"
+                + detail +
                 "🔔 จากนี้คุณจะได้รับการแจ้งเตือนนัดหมายล่วงหน้า\n"
                 "  • 3 วัน ก่อนถึงวันนัด\n"
                 "  • 1 วัน ก่อนถึงวันนัด\n\n"
