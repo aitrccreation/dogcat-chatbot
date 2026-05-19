@@ -1850,6 +1850,33 @@ def run_summary_now():
 # ──────────────────────────────────────────────
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
 
+@app.route("/api/test_drx", methods=["GET"])
+def api_test_drx():
+    """Debug: ทดสอบ DRX connection + login บน Railway"""
+    key = request.headers.get("X-API-Key", "") or request.args.get("key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        import drx_bridge
+        info = {
+            "drx_username_set": bool(os.environ.get("DRX_USERNAME", "")),
+            "drx_password_set": bool(os.environ.get("DRX_PASSWORD", "")),
+            "drx_json_exists":  drx_bridge.OUTPUT.exists() if hasattr(drx_bridge, 'OUTPUT') else None,
+        }
+        # ลอง login
+        session = drx_bridge.make_session()
+        ok = drx_bridge.login(session)
+        info["login_ok"] = ok
+        if ok:
+            # try fetch 1 endpoint
+            summary = drx_bridge.fetch_summary(session)
+            info["summary_keys"] = list(summary.keys()) if isinstance(summary, dict) else None
+        return jsonify(info)
+    except Exception as e:
+        import traceback
+        return jsonify({"error": str(e), "trace": traceback.format_exc()[:500]}), 500
+
+
 @app.route("/api/run/<job>", methods=["GET", "POST"])
 def api_run_job(job: str):
     """Manual trigger สำหรับ scheduled jobs — protected by INTERNAL_API_KEY
