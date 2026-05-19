@@ -1850,6 +1850,30 @@ def run_summary_now():
 # ──────────────────────────────────────────────
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
 
+@app.route("/api/run/<job>", methods=["GET", "POST"])
+def api_run_job(job: str):
+    """Manual trigger สำหรับ scheduled jobs — protected by INTERNAL_API_KEY
+    job: drx | queue | send
+    """
+    key = request.headers.get("X-API-Key", "") or request.args.get("key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    try:
+        import scheduler as _s
+        if job == "drx":
+            _s.run_appointment_drx_sync()
+        elif job == "queue":
+            _s.run_appointment_queue_build()
+        elif job == "send":
+            _s.run_appointment_send()
+        else:
+            return jsonify({"error": f"unknown job: {job}"}), 400
+        return jsonify({"ok": True, "job": job})
+    except Exception as e:
+        log.exception(f"api_run_job error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/queue_response", methods=["POST"])
 def api_queue_response():
     """รับ queue response จาก Railway (confirm/reschedule) → อัพ local Excel
