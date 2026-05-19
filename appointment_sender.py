@@ -337,6 +337,21 @@ def main():
 
     if not dry_run:
         wb.save(XLSX)
+        # mirror Send_Queue ไป Google Sheet หลังส่ง (ให้ status เปลี่ยน)
+        try:
+            import gsheet_db
+            if gsheet_db.is_enabled():
+                from openpyxl import load_workbook as _lw
+                wb_g = _lw(XLSX)
+                ws_g = wb_g["Send_Queue"]
+                rows_g = []
+                for r in ws_g.iter_rows(min_row=2, values_only=True):
+                    if r[0]:
+                        rows_g.append([str(v) if v is not None else "" for v in r])
+                gsheet_db.sync_send_queue(rows_g)
+                print(f"   [gsheet] ✅ mirrored {len(rows_g)} queue rows after send")
+        except Exception as e:
+            print(f"   [gsheet] ⚠️ post-send mirror failed: {e}")
 
     # แจ้ง admin เรื่อง NoLine
     if noline_rows and not dry_run:
@@ -346,6 +361,7 @@ def main():
     print(f"📊 Summary: {stats}")
     if noline_rows:
         print(f"   {len(noline_rows)} รายที่ไม่มี LINE — แจ้ง admin แล้ว")
+    return stats
 
 
 if __name__ == "__main__":

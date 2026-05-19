@@ -1894,20 +1894,45 @@ def api_run_job(job: str):
     key = request.headers.get("X-API-Key", "") or request.args.get("key", "")
     if key != INTERNAL_API_KEY:
         return jsonify({"error": "unauthorized"}), 403
+    import io as _io
+    import sys as _sys
+    # Capture stdout to return it in response (debug)
+    captured = _io.StringIO()
+    old_stdout = _sys.stdout
+    _sys.stdout = captured
+    result = None
     try:
-        import scheduler as _s
-        if job == "drx":
-            _s.run_appointment_drx_sync()
-        elif job == "queue":
-            _s.run_appointment_queue_build()
+        if job == "queue":
+            import appointment_sync
+            appointment_sync.run_queue_build()
         elif job == "send":
-            _s.run_appointment_send()
+            import appointment_sender
+            old_argv = _sys.argv
+            _sys.argv = ["appointment_sender.py"]
+            try:
+                result = appointment_sender.main()
+            finally:
+                _sys.argv = old_argv
+        elif job == "drx":
+            import appointment_sync
+            appointment_sync.run_drx_sync(fetch_fresh=True)
         else:
             return jsonify({"error": f"unknown job: {job}"}), 400
-        return jsonify({"ok": True, "job": job})
+        return jsonify({
+            "ok": True,
+            "job": job,
+            "stats": result,
+            "output": captured.getvalue()[-2000:],   # ล่าสุด 2000 chars
+        })
     except Exception as e:
-        log.exception(f"api_run_job error: {e}")
-        return jsonify({"error": str(e)}), 500
+        import traceback
+        return jsonify({
+            "error": str(e),
+            "trace": traceback.format_exc()[-500:],
+            "output": captured.getvalue()[-2000:],
+        }), 500
+    finally:
+        _sys.stdout = old_stdout
 
 
 @app.route("/api/queue_response", methods=["POST"])
