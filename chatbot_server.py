@@ -853,7 +853,7 @@ def handle_appointment_postback(reply_token: str, user_id: str, data: str):
             f"🐾 น้อง{pet_name}\n"
             f"📅 {thai_d}\n\n"
             "ขอบคุณค่ะ พบกันวันนัด 🐾💕\n"
-            "หากต้องการเลื่อนนัด กรุณาโทร 080-4288181 ค่ะ"
+            "หากต้องการเลื่อนนัด กรุณาโทร 090-1556446 ค่ะ"
         )
         line_reply_text(reply_token, reply_text)
         # แจ้ง admin + อัพ local xlsx ผ่าน ngrok
@@ -870,8 +870,7 @@ def handle_appointment_postback(reply_token: str, user_id: str, data: str):
             f"🐾 น้อง{pet_name}\n"
             f"📅 นัดเดิม: {thai_d}\n\n"
             "หากต้องการนัดวันที่สะดวก กรุณาโทร:\n"
-            "📞 080-4288181 (ราชวิถี)\n"
-            "📞 090-1556446 (ม.ศิลปากร)\n\n"
+            "📞 090-1556446 ค่ะ\n\n"
             "ขออภัยในความไม่สะดวกค่ะ 🙏"
         )
         line_reply_text(reply_token, reply_text)
