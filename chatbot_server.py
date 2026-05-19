@@ -1412,10 +1412,8 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         ai_draft  = ai_result.get("draft", "")
         log.info(f"[{user_id}] AI mode={ai_mode} conf={ai_conf} qa_id={qa_id}")
 
-        # ── 3a. Free mode — ตอบอิสระด้านสุขภาพสัตว์ ──
-        if ai_mode == "free" and ai_conf in ("high", "medium") and ai_answer:
-            reset_session(user_id)
-            return {"text": ai_answer + FOOTER, "images": []}
+        # ── 3a. Free mode — ปิดแล้ว: ไม่ตอบอิสระ ทุกคำถามต้องมีใน KB ──
+        # (free mode ถูกลบออกจาก ai_agent.py — AI จะ classify เป็น handoff แทน)
 
         # ── 3b. KB mode + high confidence — ตอบจาก knowledge base ──
         if ai_mode == "kb" and ai_conf == "high" and qa_id:
