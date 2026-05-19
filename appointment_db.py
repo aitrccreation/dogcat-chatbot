@@ -187,8 +187,23 @@ def verify_hn_with_drx(hn: str) -> dict | None:
     except Exception:
         return None
 
-    # ค้นจาก cases (raw cell[2] = hn)
-    for c in (data.get("_raw", {}) or {}).get("cases", []):
+    raw = data.get("_raw", {}) or {}
+
+    # ── 1. ค้นจาก _raw.appointments (cell[11] = HN, cell[5] = "pet/owner") ──
+    for c in raw.get("appointments", []):
+        cells = c.get("cell", []) if isinstance(c, dict) else []
+        if len(cells) > 11 and str(cells[11]).strip() == hn:
+            pet_owner = str(cells[5]) if len(cells) > 5 else ""
+            pet, owner = pet_owner.split("/", 1) if "/" in pet_owner else (pet_owner, "")
+            return {
+                "hn":         hn,
+                "pet_name":   pet.strip(),
+                "owner_name": owner.strip(),
+                "phone":      str(cells[6]).strip() if len(cells) > 6 else "",
+            }
+
+    # ── 2. ค้นจาก _raw.cases (cell[2] = HN) ──
+    for c in raw.get("cases", []):
         cells = c.get("cell", []) if isinstance(c, dict) else []
         if len(cells) >= 3 and str(cells[2]).strip() == hn:
             pet_owner = str(cells[1]) if len(cells) > 1 else ""
@@ -200,7 +215,7 @@ def verify_hn_with_drx(hn: str) -> dict | None:
                 "vet":        cells[4] if len(cells) > 4 else "",
             }
 
-    # ลอง mapped cases
+    # ── 3. ลอง mapped cases ──
     for c in data.get("cases", []):
         if c.get("hn") == hn or c.get("hn") == f"HN-{hn}":
             return {
