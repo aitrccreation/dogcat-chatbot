@@ -291,25 +291,27 @@ def main():
                           str(pet), str(owner), str(vet), str(service),
                           days_until, hn=str(hn))
         uid_list = [u.strip() for u in str(line_uid).split(",") if u.strip()]
-        all_ok = True
+        sent_count = 0
         for uid in uid_list:
             if dry_run:
                 print(f"  [DRY] qid={qid} HN={hn} round={which_round} → {uid[:16]}...")
-                ok, err = True, ""
+                sent_count += 1
             else:
                 ok, err = send_flex(uid, flex)
-            if not ok:
-                all_ok = False
-                stats["error"] += 1
-                print(f"  ❌ qid={qid} HN={hn} round={which_round} → {uid[:16]} FAIL: {err}")
+                if ok:
+                    sent_count += 1
+                else:
+                    stats["error"] += 1
+                    print(f"  ❌ qid={qid} HN={hn} round={which_round} → {uid[:16]} FAIL: {err}")
 
-        if all_ok:
+        if sent_count > 0:
+            # อัพ Excel ถ้าส่งได้อย่างน้อย 1 คน
             ts = now_iso()
             ws.cell(row=row_idx, column=10 + which_round, value=ts)
             if status == "Pending":
                 ws.cell(row=row_idx, column=10, value="Sent")
             stats[f"sent_r{which_round}"] += 1
-            print(f"  ✅ qid={qid} HN={hn} round={which_round} → {len(uid_list)} recipient(s)")
+            print(f"  ✅ qid={qid} HN={hn} round={which_round} → {sent_count}/{len(uid_list)} recipient(s)")
 
     if not dry_run:
         wb.save(XLSX)
