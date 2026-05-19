@@ -94,7 +94,24 @@ def register_customer(
     phone:      str = "",
     note:       str = "",
 ) -> dict | None:
-    """เพิ่ม/อัพเดต customer mapping. Returns dict หรือ None ถ้า HN เต็มแล้ว"""
+    """เพิ่ม/อัพเดต customer mapping. Returns dict หรือ None ถ้า HN เต็มแล้ว
+    เขียนทั้ง xlsx (local cache) และ Google Sheet (persistent) ถ้าตั้ง env vars แล้ว
+    """
+    # ── ลอง write ไป Google Sheet ก่อน (ถ้าตั้งไว้) ──
+    try:
+        import gsheet_db
+        if gsheet_db.is_enabled():
+            gs_result = gsheet_db.register_customer(
+                line_user_id=line_user_id, hn=hn,
+                owner_name=owner_name, pet_name=pet_name, pet_type=pet_type,
+                phone=phone, note=note, max_per_hn=MAX_USERS_PER_HN,
+            )
+            if gs_result is None:
+                # quota เต็ม — ไม่ต้องเขียน xlsx
+                log_event("Register", hn, line_user_id, "HN quota full (gsheet)", "FAIL")
+                return None
+    except Exception as e:
+        log_event("Register", hn, line_user_id, f"gsheet error: {e}", "WARN")
     with _lock:
         wb = _load()
         ws = wb["Customers"]

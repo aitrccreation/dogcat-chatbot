@@ -238,9 +238,43 @@ def collect_send_queue():
     return added, len(candidates)
 
 
+def sync_customers_from_gsheet():
+    """ดึง customers จาก Google Sheet (persistent storage) → อัพ local Customers"""
+    try:
+        import gsheet_db
+    except ImportError:
+        return 0
+    if not gsheet_db.is_enabled():
+        return 0
+    try:
+        customers = gsheet_db.get_all_customers()
+        if not customers:
+            print("   [gsheet-sync] ไม่มี customers ใน Google Sheet")
+            return 0
+        import appointment_db as adb
+        updated = 0
+        for c in customers:
+            uid = c.get("line_user_id")
+            hn  = c.get("hn")
+            if uid and hn:
+                adb.register_customer(
+                    line_user_id=uid, hn=hn,
+                    owner_name=c.get("owner_name", ""),
+                    pet_name=c.get("pet_name", ""),
+                    phone=c.get("phone", ""),
+                )
+                updated += 1
+        print(f"   [gsheet-sync] ✅ synced {updated} customers จาก Google Sheet")
+        return updated
+    except Exception as e:
+        print(f"   [gsheet-sync] ⚠️ error: {e}")
+        return 0
+
+
 def sync_customers_from_railway():
     """ดึง customer registrations จาก Railway bot API → อัพ local Customers sheet
     ใช้ env var: RAILWAY_BOT_URL, INTERNAL_API_KEY
+    (Fallback ถ้าไม่ได้ใช้ Google Sheet)
     """
     import os
     try:
@@ -308,8 +342,11 @@ def main():
         print(f"❌ {XLSX.name} missing — run init_appointments_xlsx.py first")
         sys.exit(1)
 
-    # 0. sync customer registrations จาก Railway bot
-    sync_customers_from_railway()
+    # 0a. sync customers จาก Google Sheet (primary persistent storage)
+    gs_synced = sync_customers_from_gsheet()
+    # 0b. ถ้า gsheet ไม่ทำงาน → fallback ดึงจาก Railway ephemeral xlsx
+    if gs_synced == 0:
+        sync_customers_from_railway()
 
     # 1. ดึง DRX → DRX_Appointments
     drx = load_drx_appointments()
