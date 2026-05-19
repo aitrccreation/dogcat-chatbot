@@ -33,9 +33,9 @@ from openpyxl import load_workbook
 
 XLSX = Path(__file__).parent / "appointments.xlsx"
 
-# LINE token (ใช้ Lovely Bot — ตัวเดียวกับที่บอทตอบลูกค้า)
+# LINE OA token สำหรับส่ง reminder — ใช้ LINE_OA_TOKEN ก่อน, fallback LINE_TOKEN
 LINE_TOKEN = os.environ.get(
-    "LOVELY_BOT_TOKEN",
+    "LINE_OA_TOKEN",
     os.environ.get("LINE_TOKEN", "")
 ).strip()
 
@@ -69,7 +69,7 @@ def now_iso() -> str:
 # ── Build Flex Message ──
 def build_flex(qid: int, appt_date_iso: str, appt_time: str,
                pet_name: str, owner_name: str, vet: str, service: str,
-               days_until: int) -> dict:
+               days_until: int, hn: str = "") -> dict:
     """LINE Flex Message bubble พร้อมปุ่มยืนยัน/เลื่อน"""
     appt_thai = thai_date(appt_date_iso)
     wd        = thai_weekday(appt_date_iso)
@@ -149,12 +149,12 @@ def build_flex(qid: int, appt_date_iso: str, appt_time: str,
                 {"type": "button", "style": "primary", "color": "#10B981",
                  "action": {"type": "postback",
                             "label": "✅ ยืนยันนัด",
-                            "data": f"appt=confirm&qid={qid}",
+                            "data": f"appt=confirm&qid={qid}&hn={hn}&pet={pet_name or '-'}&date={appt_thai}",
                             "displayText": "ยืนยันนัด"}},
                 {"type": "button", "style": "secondary",
                  "action": {"type": "postback",
                             "label": "🕐 ขอเลื่อนนัด",
-                            "data": f"appt=reschedule&qid={qid}",
+                            "data": f"appt=reschedule&qid={qid}&hn={hn}&pet={pet_name or '-'}&date={appt_thai}",
                             "displayText": "ขอเลื่อนนัด"}},
             ],
         },
@@ -289,7 +289,7 @@ def main():
         # Build + send
         flex = build_flex(qid, str(appt_date_iso), str(appt_time),
                           str(pet), str(owner), str(vet), str(service),
-                          days_until)
+                          days_until, hn=str(hn))
         if dry_run:
             print(f"  [DRY] qid={qid} HN={hn} round={which_round} → {line_uid[:12]}...")
             ok, err = True, ""

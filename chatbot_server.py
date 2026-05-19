@@ -750,9 +750,55 @@ def line_reply_with_images(reply_token: str, reply: dict):
 # ──────────────────────────────────────────────
 #  APPOINTMENT POSTBACK HANDLER (Phase D)
 # ──────────────────────────────────────────────
+def _notify_admin_appt(action: str, hn: str, pet: str, date: str, user_id: str):
+    """แจ้ง admin ทาง LINE เมื่อลูกค้ายืนยัน/เลื่อนนัด"""
+    admin_id = ADMIN_LINE_ID
+    token    = LINE_CHANNEL_ACCESS_TOKEN   # Lovely Bot หรือ OA token
+    if not admin_id or not token:
+        return
+    emoji  = "✅" if action == "confirm" else "⚠️"
+    action_th = "ยืนยันนัด" if action == "confirm" else "ขอเลื่อนนัด"
+    msg = (
+        f"{emoji} ลูกค้า{action_th}\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"🐾 น้อง: {pet}\n"
+        f"🆔 HN: {hn}\n"
+        f"📅 วันนัด: {date}\n"
+        f"👤 LINE ID: {user_id[:16]}..."
+    )
+    try:
+        req.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"to": admin_id, "messages": [{"type": "text", "text": msg}]},
+            timeout=5,
+        )
+    except Exception as e:
+        log.warning(f"[admin notify] failed: {e}")
+
+
+def _update_local_queue(qid: int, status: str, hn: str, pet: str, date: str):
+    """เรียก local machine ผ่าน ngrok เพื่ออัพ Excel queue (best effort)"""
+    import os as _os
+    local_url = _os.environ.get("LOCAL_API_URL", "").rstrip("/")
+    api_key   = _os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
+    if not local_url:
+        return
+    try:
+        req.post(
+            f"{local_url}/api/queue_response",
+            headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+            json={"qid": qid, "status": status, "hn": hn, "pet": pet, "date": date},
+            timeout=5,
+        )
+        log.info(f"[queue_response] updated qid={qid} → {status}")
+    except Exception as e:
+        log.warning(f"[queue_response] local update failed (ok): {e}")
+
+
 def handle_appointment_postback(reply_token: str, user_id: str, data: str):
     """รับ postback จากปุ่ม Flex Message ของ appointment reminder
-    Postback format: appt=confirm&qid=99  หรือ  appt=reschedule&qid=99
+    Postback format: appt=confirm&qid=99&hn=690001-1&pet=หมูกะทะ&date=22+พ.ค.+2569
     """
     if not APPOINTMENT_DB_READY:
         log.warning("appointment_db not loaded — postback ignored")
@@ -776,52 +822,48 @@ def handle_appointment_postback(reply_token: str, user_id: str, data: str):
         log.info(f"[{user_id}] postback not for appointment: {data}")
         return
 
-    # ดึง appointment row จาก Excel
-    appt = adb.find_queue_by_id(qid_int)
-    if not appt:
-        line_reply_text(reply_token,
-            "🤔 ไม่พบนัดหมายในระบบค่ะ\n"
-            "หากต้องการความช่วยเหลือ โทร 080-4288181 ได้เลยค่ะ")
-        return
+    # ดึงข้อมูลจาก postback data ที่ฝังไว้ (ไม่ต้องเปิด xlsx)
+    hn_pb   = (params.get("hn")   or [""])[0]
+    pet_pb  = (params.get("pet")  or ["-"])[0].replace("+", " ")
+    date_pb = (params.get("date") or [""])[0].replace("+", " ")
 
-    # Verify ownership (line_user_id ใน queue ต้องตรงกับ postback sender)
-    queue_uid = (appt.get("line_user_id") or "").strip()
-    if queue_uid and queue_uid != user_id:
-        log.warning(f"[{user_id}] postback for qid={qid_int} but queue user={queue_uid}")
-        # ไม่ตอบ — ป้องกัน postback ของคนอื่น
-
-    pet_name   = appt.get("pet_name") or "-"
-    appt_date  = appt.get("appt_date") or ""
-    appt_time  = appt.get("appt_time") or ""
-
-    # Format date เป็นไทย
-    try:
-        from datetime import datetime as _dt
-        THAI_M = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
-                  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
-        d = _dt.strptime(str(appt_date), "%Y-%m-%d").date()
-        thai_d = f"{d.day} {THAI_M[d.month]} {d.year + 543}"
-    except Exception:
-        thai_d = str(appt_date)
+    # ลอง lookup local xlsx เพิ่มเติม (ถ้ามี) — ไม่ block ถ้าไม่เจอ
+    appt = adb.find_queue_by_id(qid_int) or {}
+    pet_name = appt.get("pet_name") or pet_pb or "-"
+    hn_val   = appt.get("hn")       or hn_pb  or "-"
+    thai_d   = date_pb  # ใช้จาก postback ก่อน
+    if appt.get("appt_date"):
+        try:
+            from datetime import datetime as _dt
+            THAI_M = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+                      "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+            d = _dt.strptime(str(appt["appt_date"]), "%Y-%m-%d").date()
+            thai_d = f"{d.day} {THAI_M[d.month]} {d.year + 543}"
+        except Exception:
+            pass
 
     if action == "confirm":
-        adb.update_send_queue_status(qid_int, "Confirmed", "Confirmed via LINE")
-        adb.log_event("Confirm", str(appt.get("hn") or ""), user_id,
-                      f"qid={qid_int} {pet_name} {appt_date}", "OK")
+        # อัพ xlsx ถ้ามีข้อมูล local
+        if appt:
+            adb.update_send_queue_status(qid_int, "Confirmed", "Confirmed via LINE")
+            adb.log_event("Confirm", hn_val, user_id, f"qid={qid_int} {pet_name}", "OK")
         reply_text = (
             "✅ ยืนยันนัดเรียบร้อยค่ะ!\n"
             "━━━━━━━━━━━━━━━━━\n\n"
             f"🐾 น้อง{pet_name}\n"
-            f"📅 {thai_d}{(' เวลา ' + str(appt_time)) if appt_time else ''}\n\n"
+            f"📅 {thai_d}\n\n"
             "ขอบคุณค่ะ พบกันวันนัด 🐾💕\n"
             "หากต้องการเลื่อนนัด กรุณาโทร 080-4288181 ค่ะ"
         )
         line_reply_text(reply_token, reply_text)
+        # แจ้ง admin + อัพ local xlsx ผ่าน ngrok
+        _notify_admin_appt("confirm", hn_val, pet_name, thai_d, user_id)
+        _update_local_queue(qid_int, "Confirmed", hn_val, pet_name, thai_d)
 
     elif action == "reschedule":
-        adb.update_send_queue_status(qid_int, "Reschedule", "Customer requested reschedule")
-        adb.log_event("Reschedule", str(appt.get("hn") or ""), user_id,
-                      f"qid={qid_int} {pet_name} {appt_date}", "OK")
+        if appt:
+            adb.update_send_queue_status(qid_int, "Reschedule", "Customer requested reschedule")
+            adb.log_event("Reschedule", hn_val, user_id, f"qid={qid_int} {pet_name}", "OK")
         reply_text = (
             "🕐 รับทราบค่ะ เจ้าหน้าที่จะติดต่อกลับเพื่อนัดใหม่\n"
             "━━━━━━━━━━━━━━━━━\n\n"
@@ -833,12 +875,9 @@ def handle_appointment_postback(reply_token: str, user_id: str, data: str):
             "ขออภัยในความไม่สะดวกค่ะ 🙏"
         )
         line_reply_text(reply_token, reply_text)
-        # แจ้ง admin
-        notify_admin_unanswered(
-            user_id,
-            f"[Reschedule] น้อง{pet_name} (HN {appt.get('hn')}) — นัดเดิม {thai_d}",
-            "ลูกค้าขอเลื่อนนัด — กรุณาติดต่อกลับเพื่อจัดวันใหม่"
-        )
+        # แจ้ง admin + อัพ local xlsx ผ่าน ngrok
+        _notify_admin_appt("reschedule", hn_val, pet_name, thai_d, user_id)
+        _update_local_queue(qid_int, "Reschedule", hn_val, pet_name, thai_d)
 
 
 # ──────────────────────────────────────────────
@@ -1783,6 +1822,35 @@ def run_summary_now():
 #  API: sync customers ไปยัง local appointment_sync
 # ──────────────────────────────────────────────
 INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
+
+@app.route("/api/queue_response", methods=["POST"])
+def api_queue_response():
+    """รับ queue response จาก Railway (confirm/reschedule) → อัพ local Excel
+    Header: X-API-Key: <INTERNAL_API_KEY>
+    Body: {"qid": int, "status": "Confirmed"|"Reschedule", "hn": str, "pet": str, "date": str}
+    """
+    if not APPOINTMENT_DB_READY:
+        return jsonify({"error": "appointment_db not ready"}), 503
+    key = request.headers.get("X-API-Key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    data = request.get_json(silent=True) or {}
+    qid    = data.get("qid")
+    status = data.get("status")
+    hn     = data.get("hn", "")
+    pet    = data.get("pet", "")
+    date   = data.get("date", "")
+    if not qid or status not in ("Confirmed", "Reschedule"):
+        return jsonify({"error": "invalid params"}), 400
+    try:
+        adb.update_send_queue_status(int(qid), status, f"{status} via LINE (Railway)")
+        adb.log_event(status, hn, "", f"qid={qid} {pet} {date}", "OK")
+        log.info(f"[queue_response] qid={qid} → {status} (hn={hn} pet={pet})")
+        return jsonify({"ok": True, "qid": qid, "status": status})
+    except Exception as e:
+        log.exception(f"[queue_response] error: {e}")
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/customers", methods=["GET"])
 def api_customers():
