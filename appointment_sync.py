@@ -353,6 +353,22 @@ def main():
     print(f"   loaded {len(drx)} appointments จาก DRX")
     write_drx_sheet(drx)
 
+    # 1b. mirror DRX_Appointments ไป Google Sheet
+    try:
+        import gsheet_db
+        if gsheet_db.is_enabled():
+            from openpyxl import load_workbook
+            wb_d = load_workbook(XLSX)
+            ws_d = wb_d["DRX_Appointments"]
+            rows_d = []
+            for r in ws_d.iter_rows(min_row=2, values_only=True):
+                if r[0]:
+                    rows_d.append([str(v) if v is not None else "" for v in r])
+            if gsheet_db.sync_drx_appointments(rows_d):
+                print(f"   [gsheet] ✅ mirrored {len(rows_d)} DRX rows to Google Sheet")
+    except Exception as e:
+        print(f"   [gsheet] ⚠️ sync_drx error: {e}")
+
     # 2. รวมเข้า Send_Queue (ดึง line_user_id จาก Customers sheet อัตโนมัติ)
     added, total = collect_send_queue()
     print(f"   Send_Queue: +{added} new (จาก {total} candidates ในช่วง T..T+5)")
