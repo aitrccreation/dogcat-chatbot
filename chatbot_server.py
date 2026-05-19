@@ -748,6 +748,100 @@ def line_reply_with_images(reply_token: str, reply: dict):
 
 
 # ──────────────────────────────────────────────
+#  APPOINTMENT POSTBACK HANDLER (Phase D)
+# ──────────────────────────────────────────────
+def handle_appointment_postback(reply_token: str, user_id: str, data: str):
+    """รับ postback จากปุ่ม Flex Message ของ appointment reminder
+    Postback format: appt=confirm&qid=99  หรือ  appt=reschedule&qid=99
+    """
+    if not APPOINTMENT_DB_READY:
+        log.warning("appointment_db not loaded — postback ignored")
+        return
+
+    # Parse query string format
+    from urllib.parse import parse_qs
+    try:
+        params = parse_qs(data)
+    except Exception:
+        params = {}
+
+    action = (params.get("appt") or [""])[0]
+    qid    = (params.get("qid") or ["0"])[0]
+    try:
+        qid_int = int(qid)
+    except ValueError:
+        qid_int = 0
+
+    if action not in ("confirm", "reschedule") or not qid_int:
+        log.info(f"[{user_id}] postback not for appointment: {data}")
+        return
+
+    # ดึง appointment row จาก Excel
+    appt = adb.find_queue_by_id(qid_int)
+    if not appt:
+        line_reply_text(reply_token,
+            "🤔 ไม่พบนัดหมายในระบบค่ะ\n"
+            "หากต้องการความช่วยเหลือ โทร 080-4288181 ได้เลยค่ะ")
+        return
+
+    # Verify ownership (line_user_id ใน queue ต้องตรงกับ postback sender)
+    queue_uid = (appt.get("line_user_id") or "").strip()
+    if queue_uid and queue_uid != user_id:
+        log.warning(f"[{user_id}] postback for qid={qid_int} but queue user={queue_uid}")
+        # ไม่ตอบ — ป้องกัน postback ของคนอื่น
+
+    pet_name   = appt.get("pet_name") or "-"
+    appt_date  = appt.get("appt_date") or ""
+    appt_time  = appt.get("appt_time") or ""
+
+    # Format date เป็นไทย
+    try:
+        from datetime import datetime as _dt
+        THAI_M = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
+                  "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+        d = _dt.strptime(str(appt_date), "%Y-%m-%d").date()
+        thai_d = f"{d.day} {THAI_M[d.month]} {d.year + 543}"
+    except Exception:
+        thai_d = str(appt_date)
+
+    if action == "confirm":
+        adb.update_send_queue_status(qid_int, "Confirmed", "Confirmed via LINE")
+        adb.log_event("Confirm", str(appt.get("hn") or ""), user_id,
+                      f"qid={qid_int} {pet_name} {appt_date}", "OK")
+        reply_text = (
+            "✅ ยืนยันนัดเรียบร้อยค่ะ!\n"
+            "━━━━━━━━━━━━━━━━━\n\n"
+            f"🐾 น้อง{pet_name}\n"
+            f"📅 {thai_d}{(' เวลา ' + str(appt_time)) if appt_time else ''}\n\n"
+            "ขอบคุณค่ะ พบกันวันนัด 🐾💕\n"
+            "หากต้องการเลื่อนนัด กรุณาโทร 080-4288181 ค่ะ"
+        )
+        line_reply_text(reply_token, reply_text)
+
+    elif action == "reschedule":
+        adb.update_send_queue_status(qid_int, "Reschedule", "Customer requested reschedule")
+        adb.log_event("Reschedule", str(appt.get("hn") or ""), user_id,
+                      f"qid={qid_int} {pet_name} {appt_date}", "OK")
+        reply_text = (
+            "🕐 รับทราบค่ะ เจ้าหน้าที่จะติดต่อกลับเพื่อนัดใหม่\n"
+            "━━━━━━━━━━━━━━━━━\n\n"
+            f"🐾 น้อง{pet_name}\n"
+            f"📅 นัดเดิม: {thai_d}\n\n"
+            "หากต้องการนัดวันที่สะดวก กรุณาโทร:\n"
+            "📞 080-4288181 (ราชวิถี)\n"
+            "📞 090-1556446 (ม.ศิลปากร)\n\n"
+            "ขออภัยในความไม่สะดวกค่ะ 🙏"
+        )
+        line_reply_text(reply_token, reply_text)
+        # แจ้ง admin
+        notify_admin_unanswered(
+            user_id,
+            f"[Reschedule] น้อง{pet_name} (HN {appt.get('hn')}) — นัดเดิม {thai_d}",
+            "ลูกค้าขอเลื่อนนัด — กรุณาติดต่อกลับเพื่อจัดวันใหม่"
+        )
+
+
+# ──────────────────────────────────────────────
 #  QUICK REPLIES (LINE)
 # ──────────────────────────────────────────────
 def quick_replies() -> list:
@@ -1394,7 +1488,9 @@ def handle_line_event(event: dict):
 
     elif event_type == "postback":
         data = event.get("postback", {}).get("data", "")
-        log.info(f"Postback: {data}")
+        user_id = (event.get("source") or {}).get("userId", "")
+        log.info(f"[{user_id}] Postback: {data}")
+        handle_appointment_postback(reply_token, user_id, data)
 
 
 # ──────────────────────────────────────────────
