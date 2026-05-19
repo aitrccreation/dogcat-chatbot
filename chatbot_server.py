@@ -59,6 +59,15 @@ from bot_replies import get_reply as _get_real_reply, REAL_REPLIES, FOOTER
 # โหลด Q&A database จาก Excel
 import qa_database as qa
 
+# โหลด appointment DB (Excel-backed)
+try:
+    import appointment_db as adb
+    APPOINTMENT_DB_READY = True
+except Exception as _e:
+    APPOINTMENT_DB_READY = False
+    adb = None
+    print(f"[WARN] appointment_db not loaded: {_e}", file=sys.stderr)
+
 # ──────────────────────────────────────────────
 #  CONFIG  (อ่านจาก environment variables)
 # ──────────────────────────────────────────────
@@ -971,6 +980,7 @@ def get_session(user_id: str) -> dict:
             "candidates":    [],
             "handoff_until": 0,    # epoch timestamp; 0 = not handed off
             "menu_node":     None,
+            "register_step": None, # None | "await_hn" — สำหรับ flow ลงทะเบียน
         }
     sess = _user_sessions[user_id]
     # backward compat — ถ้ามี handed_off boolean เก่า แปลงเป็น handoff_until
@@ -978,6 +988,7 @@ def get_session(user_id: str) -> dict:
         if sess.pop("handed_off") and not sess.get("handoff_until"):
             sess["handoff_until"] = datetime.now().timestamp() + HANDOFF_COOLDOWN_SEC
     sess.setdefault("handoff_until", 0)
+    sess.setdefault("register_step", None)
     return sess
 
 
@@ -986,6 +997,7 @@ def reset_session(user_id: str):
         "candidates":    [],
         "handoff_until": 0,
         "menu_node":     None,
+        "register_step": None,
     }
 
 
@@ -1055,11 +1067,126 @@ def build_answer_reply(qa_item: dict) -> dict:
     }
 
 
+# ──────────────────────────────────────────────
+#  Registration Flow — Phase A
+#  ลูกค้าลงทะเบียนผ่านปุ่ม Rich Menu หรือพิมพ์ "ลงทะเบียน"
+# ──────────────────────────────────────────────
+REGISTER_TRIGGERS = [
+    "ลงทะเบียน", "ลงทะเบียนรับนัด", "register", "/register",
+    "สมัครรับนัด", "ผูกบัญชี", "ผูก hn", "เชื่อม hn",
+]
+
+
+def _is_register_trigger(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return any(trig.lower() in t for trig in REGISTER_TRIGGERS)
+
+
+def handle_register_flow(sess: dict, user_id: str, user_text: str):
+    """จัดการ flow ลงทะเบียน HN ↔ LINE userId
+    Return:
+      dict {text,images}   = ตอบกลับลูกค้า
+      None                 = flow นี้ไม่ relevant — ให้ flow อื่นทำต่อ
+    """
+    if not APPOINTMENT_DB_READY:
+        return None
+
+    text = (user_text or "").strip()
+
+    # State 1: user trigger ลงทะเบียน
+    if _is_register_trigger(text):
+        # ถ้าเคยลงทะเบียนแล้ว — แจ้ง
+        existing = adb.find_customer_by_user_id(user_id)
+        if existing and existing.get("hn"):
+            sess["register_step"] = None
+            return {
+                "text": (
+                    f"📌 คุณลงทะเบียนรับนัดไว้แล้วค่ะ\n"
+                    f"  HN: {existing['hn']}\n"
+                    f"  เจ้าของ: {existing.get('owner_name') or '-'}\n"
+                    f"  น้อง: {existing.get('pet_name') or '-'}\n\n"
+                    f"หากต้องการเปลี่ยน HN กรุณาพิมพ์ \"เปลี่ยน HN\" "
+                    f"แล้วส่งเลข HN ใหม่ได้เลยค่ะ 🐾"
+                ),
+                "images": [],
+            }
+        sess["register_step"] = "await_hn"
+        return {
+            "text": (
+                "📝 ลงทะเบียนรับการแจ้งนัดทาง LINE\n"
+                "━━━━━━━━━━━━━━━━━\n\n"
+                "กรุณาส่งเลข HN ของน้อง (ดูได้จากใบเสร็จหรือบัตรประจำตัวสัตว์เลี้ยง) "
+                "ตัวอย่าง: 690200-1\n\n"
+                "หรือพิมพ์ \"ยกเลิก\" เพื่อออกจากการลงทะเบียนค่ะ"
+            ),
+            "images": [],
+        }
+
+    # State 2: awaiting HN
+    if sess.get("register_step") == "await_hn":
+        # ยกเลิก
+        if text.lower() in ("ยกเลิก", "cancel", "exit", "ออก"):
+            sess["register_step"] = None
+            return {"text": "ยกเลิกการลงทะเบียนค่ะ 🐾", "images": []}
+
+        hn = adb.normalize_hn(text)
+        if not hn:
+            return {
+                "text": (
+                    "🤔 ขออภัยค่ะ ไม่พบเลข HN ในข้อความ\n"
+                    "กรุณาส่งเป็นรูปแบบ เช่น \"690200-1\" หรือ \"HN 690200-1\"\n\n"
+                    "หรือพิมพ์ \"ยกเลิก\" เพื่อออกจากการลงทะเบียนค่ะ"
+                ),
+                "images": [],
+            }
+
+        # verify ใน DRX
+        info = adb.verify_hn_with_drx(hn)
+        if not info:
+            return {
+                "text": (
+                    f"❓ ไม่พบ HN {hn} ในระบบค่ะ\n"
+                    f"กรุณาตรวจสอบเลขอีกครั้ง หรือสอบถามที่คลินิก:\n"
+                    f"📞 080-4288181 (ราชวิถี) / 090-1556446 (ม.ศิลปากร)\n\n"
+                    f"หากต้องการลองส่งเลขอื่น พิมพ์ได้เลยค่ะ\n"
+                    f"หรือพิมพ์ \"ยกเลิก\" เพื่อออก"
+                ),
+                "images": [],
+            }
+
+        # save mapping
+        adb.register_customer(
+            line_user_id=user_id,
+            hn=hn,
+            owner_name=info.get("owner_name", ""),
+            pet_name=info.get("pet_name", ""),
+        )
+        sess["register_step"] = None
+        return {
+            "text": (
+                "✅ ลงทะเบียนเรียบร้อยค่ะ!\n"
+                "━━━━━━━━━━━━━━━━━\n\n"
+                f"  HN: {hn}\n"
+                f"  เจ้าของ: {info.get('owner_name') or '-'}\n"
+                f"  น้อง: {info.get('pet_name') or '-'}\n\n"
+                "🔔 จากนี้คุณจะได้รับการแจ้งเตือนนัดหมายล่วงหน้า\n"
+                "  • 3 วัน ก่อนถึงวันนัด\n"
+                "  • 1 วัน ก่อนถึงวันนัด\n\n"
+                "ขอบคุณที่ใช้บริการ Dog and Cat Lovely ค่ะ 🐾💕"
+            ),
+            "images": [],
+        }
+
+    # ไม่อยู่ใน register flow
+    return None
+
+
 def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     """
     Main Q&A flow handler — return dict {text, images} หรือ None ถ้าไม่ตอบ
     platform: "line" | "fb"
     Flow:
+      0.5. registration (HN ↔ userId)
       1. greeting → reset + ตอบ
       2. menu_node active → navigate menu tree
       3. detect menu trigger → เปิด menu tree
@@ -1073,6 +1200,11 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         remaining = int(sess["handoff_until"] - datetime.now().timestamp())
         log.info(f"[{user_id}] handoff cooldown {remaining}s remaining — skip")
         return None
+
+    # ── 0.5 Registration flow (HN ↔ LINE userId mapping) ──
+    register_reply = handle_register_flow(sess, user_id, user_text)
+    if register_reply is not None:
+        return register_reply
 
     # ── 1. Greeting → reset ──
     intent = detect_intent(user_text)
