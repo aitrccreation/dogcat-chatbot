@@ -243,6 +243,50 @@ def collect_send_queue():
     return added, len(candidates)
 
 
+def sync_drx_from_gsheet():
+    """ดึง DRX_Appointments จาก Google Sheet → local xlsx
+    ใช้บน Railway (PC sync DRX แล้ว upload Google Sheet)
+    """
+    try:
+        import gsheet_db
+        if not gsheet_db.is_enabled():
+            print("   [drx-pull] gsheet not enabled — skip")
+            return 0
+        ws = gsheet_db._get_drx()
+        if not ws:
+            return 0
+        records = ws.get_all_records()
+        if not records:
+            print("   [drx-pull] no DRX data ใน Google Sheet")
+            return 0
+        from openpyxl import load_workbook
+        wb = load_workbook(XLSX)
+        ws_xlsx = wb["DRX_Appointments"]
+        # clear existing rows (keep header)
+        if ws_xlsx.max_row > 1:
+            ws_xlsx.delete_rows(2, ws_xlsx.max_row - 1)
+        # write new rows
+        for r in records:
+            ws_xlsx.append([
+                r.get("appt_id", ""),
+                r.get("hn", ""),
+                r.get("owner_name", ""),
+                r.get("pet_name", ""),
+                r.get("vet", ""),
+                r.get("service", ""),
+                r.get("appt_date", ""),
+                r.get("appt_time", ""),
+                r.get("source", ""),
+                r.get("synced_at", ""),
+            ])
+        wb.save(XLSX)
+        print(f"   [drx-pull] ✅ pulled {len(records)} DRX rows จาก Google Sheet")
+        return len(records)
+    except Exception as e:
+        print(f"   [drx-pull] ⚠️ error: {e}")
+        return 0
+
+
 def sync_customers_from_gsheet():
     """ดึง customers จาก Google Sheet (persistent storage) → อัพ local Customers"""
     try:
@@ -387,12 +431,16 @@ def run_drx_sync(fetch_fresh: bool = True):
 
 
 def run_queue_build():
-    """Build Send_Queue จาก DRX_Appointments + mirror ไป Google Sheet"""
+    """Build Send_Queue จาก DRX_Appointments + mirror ไป Google Sheet
+    บน Railway: DRX_Appointments มาจาก Google Sheet (PC sync ก่อน 20:15)
+    """
     print("─── QUEUE BUILD (T+2 only) ───")
-    # 0. sync customers จาก Google Sheet ก่อน build queue
+    # 0a. sync customers จาก Google Sheet
     gs_synced = sync_customers_from_gsheet()
     if gs_synced == 0:
         sync_customers_from_railway()
+    # 0b. pull DRX จาก Google Sheet (Railway เข้า DRX ไม่ได้)
+    sync_drx_from_gsheet()
     # 1. build queue
     added, total = collect_send_queue()
     print(f"   Send_Queue: +{added} new (จาก {total} candidates ใน T+2)")

@@ -130,10 +130,10 @@ def start_scheduler():
         )
 
     # 2) Appointment workflow jobs (รันบน Railway 24/7)
+    # หมายเหตุ: DRX sync ไม่ได้รันบน Railway เพราะ DRX อยู่บน clinic network — PC ต้องดึง
     APPT_JOBS = [
-        (13, 0,  run_appointment_queue_build, "Appt_Queue_Build", "Queue build (T+2)"),
-        (18, 0,  run_appointment_send,        "Appt_Send_LINE",   "Send LINE reminders"),
-        (20, 15, run_appointment_drx_sync,    "Appt_DRX_Sync",    "DRX sync"),
+        (13, 0, run_appointment_queue_build, "Appt_Queue_Build", "Queue build (T+2)"),
+        (18, 0, run_appointment_send,        "Appt_Send_LINE",   "Send LINE reminders"),
     ]
     for hh, mm, fn, job_id, name in APPT_JOBS:
         scheduler.add_job(
