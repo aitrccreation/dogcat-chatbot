@@ -53,15 +53,20 @@ def parse_thai_date(s: str) -> str | None:
 
 
 def fetch_drx_if_needed(force: bool = False):
-    """รัน drx_bridge.py ถ้า drx_data.json เก่ากว่า 24 ชม. หรือ force"""
+    """รัน drx_bridge.run_fetch() ถ้า drx_data.json เก่ากว่า 24 ชม. หรือ force
+    ใช้ import direct (ไม่ใช่ subprocess) เพื่อให้ทำงานได้บน Railway
+    """
     if force or not DRX_JSON.exists():
         print("🔄 Fetching fresh DRX data...")
-        result = subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "drx_bridge.py")],
-            capture_output=True, text=True, encoding="utf-8"
-        )
-        if result.returncode != 0:
-            print(f"[WARN] drx_bridge failed: {result.stderr[:200]}")
+        try:
+            import drx_bridge
+            ok = drx_bridge.run_fetch()
+            if not ok:
+                print("[WARN] drx_bridge.run_fetch() returned False")
+            else:
+                print(f"   ✅ drx_data.json updated ({DRX_JSON.stat().st_size if DRX_JSON.exists() else 0} bytes)")
+        except Exception as e:
+            print(f"[ERROR] drx_bridge failed: {e}")
 
 
 def load_drx_appointments() -> list[dict]:
