@@ -280,7 +280,12 @@ def sync_drx_from_gsheet():
                 r.get("synced_at", ""),
             ])
         wb.save(XLSX)
-        print(f"   [drx-pull] ✅ pulled {len(records)} DRX rows จาก Google Sheet")
+        # แสดงวันที่ sync ล่าสุด (ป้องกันสับสนเมื่อ PC ไม่ได้รัน)
+        synced_dates = [r.get("synced_at", "") for r in records if r.get("synced_at")]
+        last_sync = max(synced_dates) if synced_dates else "ไม่ทราบ"
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        stale_warn = " ⚠️ ข้อมูลเก่า (PC ไม่ได้ sync คืนนี้)" if last_sync[:10] < today_str else ""
+        print(f"   [drx-pull] ✅ pulled {len(records)} DRX rows จาก Google Sheet (sync ล่าสุด: {last_sync[:16]}){stale_warn}")
         return len(records)
     except Exception as e:
         print(f"   [drx-pull] ⚠️ error: {e}")
