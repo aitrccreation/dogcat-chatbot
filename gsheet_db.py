@@ -24,7 +24,18 @@ HEADERS = [
     "phone", "registered_at", "last_active", "note",
 ]
 
+RESPONSES_HEADERS = [
+    "timestamp", "qid", "hn", "pet_name", "appt_date", "action", "line_user_id", "note",
+]
+
+LOG_HEADERS = [
+    "timestamp", "event", "hn", "line_user_id", "detail", "result",
+]
+
+_wb = None
 _sheet = None
+_responses_sheet = None
+_log_sheet = None
 _init_attempted = False
 _disabled = False
 
@@ -33,15 +44,15 @@ def _now_iso() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _get_sheet():
-    """Lazy init — connect to Google Sheet เฉพาะเมื่อใช้ครั้งแรก"""
-    global _sheet, _init_attempted, _disabled
+def _init_workbook():
+    """เปิด workbook + เตรียม 3 worksheets: Customers, Responses, Log"""
+    global _wb, _sheet, _responses_sheet, _log_sheet, _init_attempted, _disabled
     if _disabled:
         return None
-    if _sheet is not None:
-        return _sheet
+    if _wb is not None:
+        return _wb
     if _init_attempted:
-        return _sheet  # already tried, failed
+        return _wb
 
     _init_attempted = True
 
@@ -75,21 +86,45 @@ def _get_sheet():
             return None
 
         client = gspread.authorize(creds)
-        wb = client.open_by_key(sheet_id)
+        _wb = client.open_by_key(sheet_id)
 
-        # ใช้ worksheet "Customers" — ถ้าไม่มีให้สร้าง
-        try:
-            _sheet = wb.worksheet("Customers")
-        except Exception:
-            _sheet = wb.add_worksheet(title="Customers", rows=1000, cols=len(HEADERS))
-            _sheet.append_row(HEADERS)
+        def _get_or_create_ws(title, headers):
+            try:
+                return _wb.worksheet(title)
+            except Exception:
+                ws = _wb.add_worksheet(title=title, rows=1000, cols=len(headers))
+                ws.append_row(headers)
+                return ws
 
-        log.info("[gsheet] connected to Google Sheet successfully")
-        return _sheet
+        _sheet           = _get_or_create_ws("Customers", HEADERS)
+        _responses_sheet = _get_or_create_ws("Responses", RESPONSES_HEADERS)
+        _log_sheet       = _get_or_create_ws("Log",       LOG_HEADERS)
+
+        log.info("[gsheet] connected — 3 sheets ready (Customers, Responses, Log)")
+        return _wb
     except Exception as e:
         log.exception(f"[gsheet] init failed: {e}")
         _disabled = True
         return None
+
+
+def _get_sheet():
+    """Customers worksheet (backward compat)"""
+    if _init_workbook() is None:
+        return None
+    return _sheet
+
+
+def _get_responses():
+    if _init_workbook() is None:
+        return None
+    return _responses_sheet
+
+
+def _get_log():
+    if _init_workbook() is None:
+        return None
+    return _log_sheet
 
 
 def is_enabled() -> bool:
@@ -200,6 +235,50 @@ def register_customer(
 
 def count_customers_by_hn(hn: str) -> int:
     return len(find_customers_by_hn(hn))
+
+
+def log_response(qid: int, hn: str, action: str, pet_name: str = "",
+                 appt_date: str = "", line_user_id: str = "", note: str = "") -> bool:
+    """บันทึก confirm/reschedule จากลูกค้าลง Google Sheet "Responses" """
+    ws = _get_responses()
+    if not ws:
+        return False
+    try:
+        ws.append_row([
+            _now_iso(), qid, hn, pet_name, appt_date,
+            action, line_user_id, note,
+        ])
+        log.info(f"[gsheet] logged response qid={qid} action={action} hn={hn}")
+        return True
+    except Exception as e:
+        log.warning(f"[gsheet] log_response error: {e}")
+        return False
+
+
+def log_event(event: str, hn: str = "", line_user_id: str = "",
+              detail: str = "", result: str = "OK") -> bool:
+    """บันทึก audit log ลง Google Sheet "Log" """
+    ws = _get_log()
+    if not ws:
+        return False
+    try:
+        ws.append_row([
+            _now_iso(), event, hn, line_user_id, str(detail)[:200], result,
+        ])
+        return True
+    except Exception as e:
+        log.warning(f"[gsheet] log_event error: {e}")
+        return False
+
+
+def get_all_responses() -> list[dict]:
+    ws = _get_responses()
+    if not ws:
+        return []
+    try:
+        return ws.get_all_records()
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":

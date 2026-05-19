@@ -842,6 +842,19 @@ def handle_appointment_postback(reply_token: str, user_id: str, data: str):
         except Exception:
             pass
 
+    # บันทึกลง Google Sheet ก่อน (persistent — ไม่หายตอน Railway redeploy)
+    try:
+        import gsheet_db
+        if gsheet_db.is_enabled():
+            gsheet_db.log_response(
+                qid=qid_int, hn=hn_val, action=action,
+                pet_name=pet_name, appt_date=thai_d, line_user_id=user_id,
+            )
+            gsheet_db.log_event(action.capitalize(), hn_val, user_id,
+                                f"qid={qid_int} {pet_name} {thai_d}", "OK")
+    except Exception as e:
+        log.warning(f"[gsheet] log error: {e}")
+
     if action == "confirm":
         # อัพ xlsx ถ้ามีข้อมูล local
         if appt:
