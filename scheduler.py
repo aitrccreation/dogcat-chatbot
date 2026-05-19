@@ -30,6 +30,49 @@ SCHEDULE_TIMES = [
 ]
 
 
+def run_appointment_drx_sync():
+    """20:15 — Sync DRX → Google Sheet (ใหม่ทุกเย็น)"""
+    log.info("[Scheduler] === Appointment DRX Sync (20:15) ===")
+    try:
+        import appointment_sync
+        appointment_sync.run_drx_sync(fetch_fresh=True)
+        log.info("[Scheduler] DRX sync OK")
+    except Exception as e:
+        log.exception(f"[Scheduler] DRX sync failed: {e}")
+
+
+def run_appointment_queue_build():
+    """13:00 — Build Send_Queue (T+2) → Google Sheet"""
+    log.info("[Scheduler] === Appointment Queue Build (13:00) ===")
+    try:
+        import appointment_sync
+        appointment_sync.run_queue_build()
+        log.info("[Scheduler] Queue build OK")
+    except Exception as e:
+        log.exception(f"[Scheduler] Queue build failed: {e}")
+
+
+def run_appointment_send():
+    """18:00 — ส่ง LINE reminders ให้ลูกค้าที่นัด T+2"""
+    log.info("[Scheduler] === Appointment Send LINE (18:00) ===")
+    try:
+        import appointment_sender
+        # appointment_sender.main() reads sys.argv — call via wrapper
+        # ใช้ subprocess เพื่อหลีกเลี่ยง sys.exit ที่อาจ kill worker
+        import sys as _sys
+        old_argv = _sys.argv
+        _sys.argv = ["appointment_sender.py"]   # no args = production mode
+        try:
+            appointment_sender.main()
+        finally:
+            _sys.argv = old_argv
+        log.info("[Scheduler] Send LINE OK")
+    except SystemExit as e:
+        log.warning(f"[Scheduler] Send LINE exited: {e}")
+    except Exception as e:
+        log.exception(f"[Scheduler] Send LINE failed: {e}")
+
+
 def run_daily_summary():
     """ดึงข้อมูล DRX → สร้างข้อความ → ส่ง LINE Push"""
     now = datetime.now()
@@ -75,6 +118,7 @@ def start_scheduler():
     tz = pytz.timezone(TZ_NAME)
     scheduler = BackgroundScheduler(timezone=tz)
 
+    # 1) Daily summary jobs
     for hh, mm in SCHEDULE_TIMES:
         scheduler.add_job(
             run_daily_summary,
@@ -85,10 +129,29 @@ def start_scheduler():
             misfire_grace_time=300,
         )
 
+    # 2) Appointment workflow jobs (รันบน Railway 24/7)
+    APPT_JOBS = [
+        (13, 0,  run_appointment_queue_build, "Appt_Queue_Build", "Queue build (T+2)"),
+        (18, 0,  run_appointment_send,        "Appt_Send_LINE",   "Send LINE reminders"),
+        (20, 15, run_appointment_drx_sync,    "Appt_DRX_Sync",    "DRX sync"),
+    ]
+    for hh, mm, fn, job_id, name in APPT_JOBS:
+        scheduler.add_job(
+            fn,
+            trigger=CronTrigger(hour=hh, minute=mm, timezone=tz),
+            id=job_id,
+            name=name,
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
+
     scheduler.start()
-    log.info(f"[Scheduler] Started with {len(SCHEDULE_TIMES)} jobs (TZ={TZ_NAME})")
+    total = len(SCHEDULE_TIMES) + len(APPT_JOBS)
+    log.info(f"[Scheduler] Started with {total} jobs (TZ={TZ_NAME})")
     for hh, mm in SCHEDULE_TIMES:
         log.info(f"  → Daily summary at {hh:02d}:{mm:02d}")
+    for hh, mm, _, _, name in APPT_JOBS:
+        log.info(f"  → {name} at {hh:02d}:{mm:02d}")
     return scheduler
 
 

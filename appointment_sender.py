@@ -228,7 +228,32 @@ def main():
     print("=" * 55)
 
     if not XLSX.exists():
-        print(f"❌ {XLSX.name} missing"); sys.exit(1)
+        # บน Railway xlsx อาจหายตอน restart — สร้างใหม่จาก Google Sheet
+        print(f"⚠️ {XLSX.name} missing — กำลังสร้างใหม่จาก Google Sheet...")
+        try:
+            import gsheet_db
+            if gsheet_db.is_enabled():
+                # restore Send_Queue จาก Google Sheet
+                from openpyxl import Workbook
+                ws_data = gsheet_db._get_queue()
+                if ws_data:
+                    wb_new = Workbook()
+                    ws_new = wb_new.active
+                    ws_new.title = "Send_Queue"
+                    rows_data = ws_data.get_all_values()  # ทั้ง headers + rows
+                    for r in rows_data:
+                        ws_new.append(r)
+                    wb_new.save(XLSX)
+                    print(f"✅ restored {len(rows_data)-1} queue rows from Google Sheet")
+                else:
+                    print("❌ Google Sheet not configured — cannot send")
+                    return
+            else:
+                print("❌ Google Sheet not configured — cannot send")
+                return
+        except Exception as e:
+            print(f"❌ restore failed: {e}")
+            return
 
     wb = load_workbook(XLSX)
     ws = wb["Send_Queue"]
