@@ -1240,6 +1240,20 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
             "images": [],
         }
 
+    # State 1.5: user ต้องการเปลี่ยน HN
+    _change_hn_triggers = ["เปลี่ยน hn", "เปลี่ยนhn", "change hn", "เปลี่ยนเลข", "เปลี่ยน hน", "เปลี่ยน"]
+    if any(trig in text.lower() for trig in _change_hn_triggers):
+        sess["register_step"] = "await_hn"
+        return {
+            "text": (
+                "🔄 เปลี่ยน HN ใหม่ค่ะ\n"
+                "━━━━━━━━━━━━━━━━━\n\n"
+                "กรุณาส่งเลข HN ใหม่ ตัวอย่าง: 690200-1\n\n"
+                "หรือพิมพ์ \"ยกเลิก\" เพื่อออกค่ะ"
+            ),
+            "images": [],
+        }
+
     # State 2: awaiting HN
     if sess.get("register_step") == "await_hn":
         # ยกเลิก
