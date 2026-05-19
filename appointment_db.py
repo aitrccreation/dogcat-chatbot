@@ -52,16 +52,37 @@ def find_customer_by_user_id(line_user_id: str) -> dict | None:
     return None
 
 
+MAX_USERS_PER_HN = 2   # สูงสุด 2 LINE accounts ต่อ 1 HN
+
+
 def find_customer_by_hn(hn: str) -> dict | None:
+    """คืน customer แรกที่พบ (backward compat)"""
+    result = find_customers_by_hn(hn)
+    return result[0] if result else None
+
+
+def find_customers_by_hn(hn: str) -> list[dict]:
+    """คืน list ของ customers ทั้งหมดที่ register HN นี้ (max MAX_USERS_PER_HN)"""
     hn = (hn or "").strip()
     with _lock:
         wb = _load()
         ws = wb["Customers"]
         headers = [c.value for c in ws[1]]
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if row[1] == hn:
-                return dict(zip(headers, row))
-    return None
+        return [
+            dict(zip(headers, row))
+            for row in ws.iter_rows(min_row=2, values_only=True)
+            if row[1] == hn and row[0]
+        ]
+
+
+def count_customers_by_hn(hn: str) -> int:
+    """นับจำนวน LINE users ที่ register HN นี้"""
+    return len(find_customers_by_hn(hn))
+
+
+def get_line_uids_by_hn(hn: str) -> list[str]:
+    """คืน list ของ line_user_id ทั้งหมดที่ผูกกับ HN นี้"""
+    return [c["line_user_id"] for c in find_customers_by_hn(hn) if c.get("line_user_id")]
 
 
 def register_customer(
@@ -72,33 +93,45 @@ def register_customer(
     pet_type:   str = "",
     phone:      str = "",
     note:       str = "",
-) -> dict:
-    """เพิ่ม/อัพเดต customer mapping. Returns dict."""
+) -> dict | None:
+    """เพิ่ม/อัพเดต customer mapping. Returns dict หรือ None ถ้า HN เต็มแล้ว"""
     with _lock:
         wb = _load()
         ws = wb["Customers"]
         now = _now_iso()
-        # หา existing row
+
+        # ── ตรวจ existing row ของ line_user_id นี้ ──
         for row in ws.iter_rows(min_row=2):
             if row[0].value == line_user_id:
-                # update existing
+                # update existing (เปลี่ยน HN หรืออัพข้อมูล)
                 row[1].value = hn
                 if owner_name: row[2].value = owner_name
                 if pet_name:   row[3].value = pet_name
                 if pet_type:   row[4].value = pet_type
                 if phone:      row[5].value = phone
-                row[7].value = now   # last_active
+                row[7].value = now
                 if note:       row[8].value = note
                 _save(wb)
                 log_event("Register", hn, line_user_id, "updated", "OK")
                 return _row_to_dict(ws, row[0].row)
-        # append new
+
+        # ── คนใหม่ — ตรวจ quota ก่อน ──
+        headers = [c.value for c in ws[1]]
+        existing_count = sum(
+            1 for row in ws.iter_rows(min_row=2, values_only=True)
+            if row[1] == hn and row[0]
+        )
+        if existing_count >= MAX_USERS_PER_HN:
+            log_event("Register", hn, line_user_id, f"HN full ({existing_count}/{MAX_USERS_PER_HN})", "FAIL")
+            return None   # ← caller ต้องเช็ค None = ลงทะเบียนไม่ได้
+
+        # ── append new ──
         ws.append([
             line_user_id, hn, owner_name, pet_name, pet_type, phone,
             now, now, note,
         ])
         _save(wb)
-        log_event("Register", hn, line_user_id, "new customer", "OK")
+        log_event("Register", hn, line_user_id, f"new customer ({existing_count+1}/{MAX_USERS_PER_HN})", "OK")
         return {
             "line_user_id":  line_user_id, "hn": hn,
             "owner_name":    owner_name, "pet_name": pet_name,

@@ -1331,8 +1331,23 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
         if not info:
             info = {}
 
+        # ตรวจ quota ก่อน save — สูงสุด MAX_USERS_PER_HN ต่อ HN
+        existing_users = adb.find_customers_by_hn(hn)
+        already_mine   = any(c.get("line_user_id") == user_id for c in existing_users)
+        if not already_mine and len(existing_users) >= adb.MAX_USERS_PER_HN:
+            sess["register_step"] = None
+            return {
+                "text": (
+                    f"⚠️ HN {hn} ลงทะเบียนครบแล้วค่ะ\n"
+                    f"(รับได้สูงสุด {adb.MAX_USERS_PER_HN} LINE ต่อ 1 HN)\n\n"
+                    "หากต้องการแก้ไข กรุณาติดต่อคลินิก:\n"
+                    "📞 080-4288181 ค่ะ"
+                ),
+                "images": [],
+            }
+
         # save mapping
-        adb.register_customer(
+        result = adb.register_customer(
             line_user_id=user_id,
             hn=hn,
             owner_name=info.get("owner_name", ""),

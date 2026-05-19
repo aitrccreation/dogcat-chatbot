@@ -286,26 +286,30 @@ def main():
             stats["skip"] += 1
             continue
 
-        # Build + send
+        # Build + send (รองรับ line_uid = "uid1,uid2" สำหรับ 2 คนต่อ HN)
         flex = build_flex(qid, str(appt_date_iso), str(appt_time),
                           str(pet), str(owner), str(vet), str(service),
                           days_until, hn=str(hn))
-        if dry_run:
-            print(f"  [DRY] qid={qid} HN={hn} round={which_round} → {line_uid[:12]}...")
-            ok, err = True, ""
-        else:
-            ok, err = send_flex(str(line_uid), flex)
+        uid_list = [u.strip() for u in str(line_uid).split(",") if u.strip()]
+        all_ok = True
+        for uid in uid_list:
+            if dry_run:
+                print(f"  [DRY] qid={qid} HN={hn} round={which_round} → {uid[:16]}...")
+                ok, err = True, ""
+            else:
+                ok, err = send_flex(uid, flex)
+            if not ok:
+                all_ok = False
+                stats["error"] += 1
+                print(f"  ❌ qid={qid} HN={hn} round={which_round} → {uid[:16]} FAIL: {err}")
 
-        if ok:
+        if all_ok:
             ts = now_iso()
-            ws.cell(row=row_idx, column=10 + which_round, value=ts)  # sent_round_X_at
+            ws.cell(row=row_idx, column=10 + which_round, value=ts)
             if status == "Pending":
                 ws.cell(row=row_idx, column=10, value="Sent")
             stats[f"sent_r{which_round}"] += 1
-            print(f"  ✅ qid={qid} HN={hn} round={which_round} sent")
-        else:
-            stats["error"] += 1
-            print(f"  ❌ qid={qid} HN={hn} round={which_round} FAIL: {err}")
+            print(f"  ✅ qid={qid} HN={hn} round={which_round} → {len(uid_list)} recipient(s)")
 
     if not dry_run:
         wb.save(XLSX)

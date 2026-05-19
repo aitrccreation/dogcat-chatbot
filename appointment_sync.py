@@ -146,12 +146,18 @@ def collect_send_queue():
         except Exception:
             return False
 
-    # Customer map: HN → line_user_id
+    # Customer map: HN → comma-joined line_user_ids (สูงสุด MAX_USERS_PER_HN)
     ws_c = wb["Customers"]
-    hn_to_userid: dict[str, str] = {}
+    hn_to_uids: dict[str, list[str]] = {}
     for row in ws_c.iter_rows(min_row=2, values_only=True):
         if row[1] and row[0]:
-            hn_to_userid[str(row[1]).strip()] = str(row[0]).strip()
+            hn_key = str(row[1]).strip()
+            hn_to_uids.setdefault(hn_key, [])
+            uid = str(row[0]).strip()
+            if uid not in hn_to_uids[hn_key]:
+                hn_to_uids[hn_key].append(uid)
+    # รวมเป็น string "uid1,uid2" สำหรับใส่ใน queue
+    hn_to_userid: dict[str, str] = {hn: ",".join(uids) for hn, uids in hn_to_uids.items()}
 
     # อ่าน existing queue → จำ confirmed
     ws_q = wb["Send_Queue"]
