@@ -1,6 +1,9 @@
 @echo off
-:: Appointment workflow — sync DRX + send reminders
-:: รัน 2 รอบ/วัน: 06:00 (sync only), 18:00 (sync + send)
+:: Appointment workflow
+::   queue  → build Send_Queue (13:00)
+::   send   → send LINE reminders (18:00)
+::   drx    → sync DRX data (20:15)
+::   both   → full sync (manual)
 chcp 65001 > nul
 set PYTHONIOENCODING=utf-8
 cd /d "D:\AI Dashboard"
@@ -13,18 +16,30 @@ if "%MODE%"=="" set MODE=both
 
 echo [%DATE% %TIME%] ===== START (mode=%MODE%) ===== >> "%LOGFILE%"
 
-if "%MODE%"=="sync" goto :sync
-if "%MODE%"=="send" goto :send
-if "%MODE%"=="both" goto :sync
+if "%MODE%"=="queue" goto :queue
+if "%MODE%"=="send"  goto :send
+if "%MODE%"=="drx"   goto :drx
+if "%MODE%"=="both"  goto :both
+goto :done
 
-:sync
-echo [%DATE% %TIME%] Syncing DRX to Excel... >> "%LOGFILE%"
-"%PYEXE%" appointment_sync.py --fetch >> "%LOGFILE%" 2>&1
-if "%MODE%"=="sync" goto :done
+:drx
+echo [%DATE% %TIME%] DRX sync (fetch fresh) ... >> "%LOGFILE%"
+"%PYEXE%" appointment_sync.py --drx-only >> "%LOGFILE%" 2>&1
+goto :done
+
+:queue
+echo [%DATE% %TIME%] Build Send_Queue (T+2) ... >> "%LOGFILE%"
+"%PYEXE%" appointment_sync.py --queue-only >> "%LOGFILE%" 2>&1
+goto :done
 
 :send
-echo [%DATE% %TIME%] Sending appointment reminders... >> "%LOGFILE%"
+echo [%DATE% %TIME%] Send LINE reminders ... >> "%LOGFILE%"
 "%PYEXE%" appointment_sender.py >> "%LOGFILE%" 2>&1
+goto :done
+
+:both
+echo [%DATE% %TIME%] Full sync (DRX + Queue) ... >> "%LOGFILE%"
+"%PYEXE%" appointment_sync.py --fetch >> "%LOGFILE%" 2>&1
 
 :done
 echo [%DATE% %TIME%] ===== DONE ===== >> "%LOGFILE%"

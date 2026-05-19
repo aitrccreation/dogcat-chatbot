@@ -1,6 +1,7 @@
 # Setup Task Scheduler for appointment workflow
-#   06:00 — sync DRX → Excel
-#   18:00 — sync + send reminders
+#   13:00 — build Send_Queue (จาก DRX data ที่มี)
+#   18:00 — send LINE reminders (ส่งล่วงหน้า 2 วัน ครั้งเดียว)
+#   20:15 — sync DRX (ดึงข้อมูลใหม่จาก DRX)
 # Run as Administrator!
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -13,8 +14,9 @@ $BAT  = "D:\AI Dashboard\appointment_run.bat"
 $USER = "TARN\aitrc"
 
 $tasks = @{
-    "DogCatLovely_APPT_Sync_0600" = @{ time = "06:00"; arg = "sync" }
-    "DogCatLovely_APPT_Send_1800" = @{ time = "18:00"; arg = "send" }
+    "DogCatLovely_APPT_Queue_1300" = @{ time = "13:00"; arg = "queue" }
+    "DogCatLovely_APPT_Send_1800"  = @{ time = "18:00"; arg = "send"  }
+    "DogCatLovely_APPT_DRX_2015"   = @{ time = "20:15"; arg = "drx"   }
 }
 
 $principal = New-ScheduledTaskPrincipal -UserId $USER -LogonType S4U -RunLevel Highest
@@ -26,6 +28,9 @@ $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -WakeToRun
+
+# ลบ task เก่า (ที่ไม่ใช้แล้ว)
+Unregister-ScheduledTask -TaskName "DogCatLovely_APPT_Sync_0600" -Confirm:$false -ErrorAction SilentlyContinue
 
 foreach ($entry in $tasks.GetEnumerator()) {
     $tn   = $entry.Key

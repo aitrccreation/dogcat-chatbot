@@ -132,17 +132,17 @@ def write_drx_sheet(appts: list[dict]):
 
 def collect_send_queue():
     """รวม DRX + Manual → Send_Queue ที่ตรงเงื่อนไข reminder window
-    เงื่อนไข: appt_date ∈ [today, today + 5 days]
+    เงื่อนไข: appt_date == today + 2 days (ส่งล่วงหน้า 2 วัน ครั้งเดียว)
     Skip: รายการที่อยู่ใน Send_Queue แล้วและ status=Confirmed
     """
     wb = load_workbook(XLSX)
     today = datetime.now().date()
-    window_end = today + timedelta(days=5)
+    target_date = today + timedelta(days=2)
 
     def in_window(d: str) -> bool:
         try:
             dt = datetime.strptime(d, "%Y-%m-%d").date()
-            return today <= dt <= window_end
+            return dt == target_date  # เฉพาะ T+2
         except Exception:
             return False
 
@@ -327,75 +327,100 @@ def sync_customers_from_railway():
         return 0
 
 
-def main():
-    args = set(sys.argv[1:])
-    fetch_fresh = "--fetch" in args
+def _mirror_drx_to_gsheet():
+    """Mirror DRX_Appointments จาก local xlsx ไป Google Sheet"""
+    try:
+        import gsheet_db
+        if not gsheet_db.is_enabled():
+            return
+        from openpyxl import load_workbook
+        wb_d = load_workbook(XLSX)
+        ws_d = wb_d["DRX_Appointments"]
+        rows_d = []
+        for r in ws_d.iter_rows(min_row=2, values_only=True):
+            if r[0]:
+                rows_d.append([str(v) if v is not None else "" for v in r])
+        if gsheet_db.sync_drx_appointments(rows_d):
+            print(f"   [gsheet] ✅ mirrored {len(rows_d)} DRX rows to Google Sheet")
+    except Exception as e:
+        print(f"   [gsheet] ⚠️ sync_drx error: {e}")
 
-    print("=" * 55)
-    print("  📅 Appointment Sync — DRX → Excel")
-    print("=" * 55)
 
+def _mirror_queue_to_gsheet():
+    """Mirror Send_Queue จาก local xlsx ไป Google Sheet"""
+    try:
+        import gsheet_db
+        if not gsheet_db.is_enabled():
+            return
+        from openpyxl import load_workbook
+        wb2 = load_workbook(XLSX)
+        ws2 = wb2["Send_Queue"]
+        rows = []
+        for r in ws2.iter_rows(min_row=2, values_only=True):
+            if r[0]:
+                rows.append([str(v) if v is not None else "" for v in r])
+        if gsheet_db.sync_send_queue(rows):
+            print(f"   [gsheet] ✅ mirrored {len(rows)} Send_Queue rows to Google Sheet")
+    except Exception as e:
+        print(f"   [gsheet] ⚠️ sync_send_queue error: {e}")
+
+
+def run_drx_sync(fetch_fresh: bool = True):
+    """ดึง DRX → DRX_Appointments + mirror ไป Google Sheet"""
+    print("─── DRX SYNC ───")
     if fetch_fresh:
         fetch_drx_if_needed(force=True)
+    drx = load_drx_appointments()
+    print(f"   loaded {len(drx)} appointments จาก DRX")
+    write_drx_sheet(drx)
+    _mirror_drx_to_gsheet()
+    try:
+        import appointment_db as adb
+        adb.log_event("DRX_Sync", "", "", f"DRX:{len(drx)}", "OK")
+    except Exception:
+        pass
+
+
+def run_queue_build():
+    """Build Send_Queue จาก DRX_Appointments + mirror ไป Google Sheet"""
+    print("─── QUEUE BUILD (T+2 only) ───")
+    # 0. sync customers จาก Google Sheet ก่อน build queue
+    gs_synced = sync_customers_from_gsheet()
+    if gs_synced == 0:
+        sync_customers_from_railway()
+    # 1. build queue
+    added, total = collect_send_queue()
+    print(f"   Send_Queue: +{added} new (จาก {total} candidates ใน T+2)")
+    _mirror_queue_to_gsheet()
+    try:
+        import appointment_db as adb
+        adb.log_event("Queue_Build", "", "", f"Queue+{added}", "OK")
+    except Exception:
+        pass
+
+
+def main():
+    args = set(sys.argv[1:])
+    drx_only   = "--drx-only" in args
+    queue_only = "--queue-only" in args
+    fetch_fresh = "--fetch" in args or drx_only   # drx-only เสมอเอา fresh
+
+    print("=" * 55)
+    print("  📅 Appointment Sync")
+    print("=" * 55)
 
     if not XLSX.exists():
         print(f"❌ {XLSX.name} missing — run init_appointments_xlsx.py first")
         sys.exit(1)
 
-    # 0a. sync customers จาก Google Sheet (primary persistent storage)
-    gs_synced = sync_customers_from_gsheet()
-    # 0b. ถ้า gsheet ไม่ทำงาน → fallback ดึงจาก Railway ephemeral xlsx
-    if gs_synced == 0:
-        sync_customers_from_railway()
-
-    # 1. ดึง DRX → DRX_Appointments
-    drx = load_drx_appointments()
-    print(f"   loaded {len(drx)} appointments จาก DRX")
-    write_drx_sheet(drx)
-
-    # 1b. mirror DRX_Appointments ไป Google Sheet
-    try:
-        import gsheet_db
-        if gsheet_db.is_enabled():
-            from openpyxl import load_workbook
-            wb_d = load_workbook(XLSX)
-            ws_d = wb_d["DRX_Appointments"]
-            rows_d = []
-            for r in ws_d.iter_rows(min_row=2, values_only=True):
-                if r[0]:
-                    rows_d.append([str(v) if v is not None else "" for v in r])
-            if gsheet_db.sync_drx_appointments(rows_d):
-                print(f"   [gsheet] ✅ mirrored {len(rows_d)} DRX rows to Google Sheet")
-    except Exception as e:
-        print(f"   [gsheet] ⚠️ sync_drx error: {e}")
-
-    # 2. รวมเข้า Send_Queue (ดึง line_user_id จาก Customers sheet อัตโนมัติ)
-    added, total = collect_send_queue()
-    print(f"   Send_Queue: +{added} new (จาก {total} candidates ในช่วง T..T+5)")
-
-    # 2b. mirror Send_Queue ไป Google Sheet (persistent + view in browser)
-    try:
-        import gsheet_db
-        if gsheet_db.is_enabled():
-            from openpyxl import load_workbook
-            wb2 = load_workbook(XLSX)
-            ws2 = wb2["Send_Queue"]
-            rows = []
-            for r in ws2.iter_rows(min_row=2, values_only=True):
-                if r[0]:  # มี queue_id
-                    rows.append([str(v) if v is not None else "" for v in r])
-            ok = gsheet_db.sync_send_queue(rows)
-            if ok:
-                print(f"   [gsheet] ✅ mirrored {len(rows)} Send_Queue rows to Google Sheet")
-    except Exception as e:
-        print(f"   [gsheet] ⚠️ sync_send_queue error: {e}")
-
-    # 3. log
-    try:
-        import appointment_db as adb
-        adb.log_event("Sync", "", "", f"DRX:{len(drx)} → Queue+{added}", "OK")
-    except Exception:
-        pass
+    if drx_only:
+        run_drx_sync(fetch_fresh=True)
+    elif queue_only:
+        run_queue_build()
+    else:
+        # full sync (manual run / first time)
+        run_drx_sync(fetch_fresh=fetch_fresh)
+        run_queue_build()
 
     print()
     print("[DONE] Sync completed")

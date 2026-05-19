@@ -4,10 +4,8 @@ Appointment Sender: Excel → LINE Flex Message
 รัน 18:00 ทุกวัน:
   สำหรับแต่ละแถวใน Send_Queue:
     - คำนวณ days_until = appt_date - today
-    - days_until == 3 → Round 1 (ส่งครั้งแรก)  → set sent_round_1_at
-    - days_until == 1 → Round 2 (ย้ำ)            → set sent_round_2_at
-    - days_until == 0 และ status != Confirmed → Round 3 (ย้ำสุดท้าย) → sent_round_3_at
-    - skip ถ้า status = Confirmed/Reschedule
+    - days_until == 2 → ส่งครั้งเดียว → set sent_round_1_at
+    - skip ถ้า status = Confirmed/Reschedule/Sent
     - skip ถ้า NoLine (ไม่มี line_user_id) — แต่บันทึก log แจ้ง admin
 
 ใช้ Flex Message + Postback action สำหรับปุ่ม ยืนยัน/เลื่อน
@@ -81,6 +79,9 @@ def build_flex(qid: int, appt_date_iso: str, appt_time: str,
     elif days_until == 1:
         header_text = "🔔 พรุ่งนี้มีนัดค่ะ"
         header_color = "#F59E0B"
+    elif days_until == 2:
+        header_text = "📅 แจ้งเตือนนัดล่วงหน้า 2 วัน"
+        header_color = "#2563EB"
     else:
         header_text = "📅 แจ้งเตือนนัดล่วงหน้า"
         header_color = "#2563EB"
@@ -274,14 +275,10 @@ def main():
                 stats["noline"] += 1
             continue
 
-        # Determine round
+        # Determine round — ส่งเฉพาะ T+2 ครั้งเดียว
         which_round = None
-        if days_until == 3 and not r1_at:
+        if days_until == 2 and not r1_at:
             which_round = 1
-        elif days_until == 1 and not r2_at:
-            which_round = 2
-        elif days_until == 0 and not r3_at and status != "Reschedule":
-            which_round = 3
         else:
             stats["skip"] += 1
             continue
