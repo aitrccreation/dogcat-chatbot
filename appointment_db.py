@@ -112,6 +112,19 @@ def _row_to_dict(ws, row_idx: int) -> dict:
     return {h: ws.cell(row=row_idx, column=i+1).value for i, h in enumerate(headers)}
 
 
+def get_all_customers() -> list[dict]:
+    """คืน list ของ customer ทั้งหมดจาก Customers sheet"""
+    with _lock:
+        wb = _load()
+        ws = wb["Customers"]
+        headers = [c.value for c in ws[1]]
+        result = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0]:  # มี line_user_id
+                result.append(dict(zip(headers, row)))
+        return result
+
+
 # ───── HN validator ─────
 HN_PATTERN = re.compile(r"^\d{6}-\d+$")    # e.g. "690200-1"
 HN_PATTERN_ALT = re.compile(r"^HN-?\d+(-\d+)?$", re.IGNORECASE)

@@ -1780,6 +1780,29 @@ def run_summary_now():
 
 
 # ──────────────────────────────────────────────
+#  API: sync customers ไปยัง local appointment_sync
+# ──────────────────────────────────────────────
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
+
+@app.route("/api/customers", methods=["GET"])
+def api_customers():
+    """คืน registered customers ทั้งหมด — ใช้โดย appointment_sync.py บน local
+    Header: X-API-Key: <INTERNAL_API_KEY>
+    """
+    if not APPOINTMENT_DB_READY:
+        return jsonify({"error": "appointment_db not ready"}), 503
+    key = request.headers.get("X-API-Key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    customers = adb.get_all_customers()
+    # แปลง datetime objects เป็น string
+    result = []
+    for c in customers:
+        result.append({k: str(v) if v is not None else None for k, v in c.items()})
+    return jsonify({"customers": result, "count": len(result)})
+
+
+# ──────────────────────────────────────────────
 #  MAIN
 # ──────────────────────────────────────────────
 if __name__ == "__main__":

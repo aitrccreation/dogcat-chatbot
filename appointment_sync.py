@@ -232,6 +232,61 @@ def collect_send_queue():
     return added, len(candidates)
 
 
+def sync_customers_from_railway():
+    """ดึง customer registrations จาก Railway bot API → อัพ local Customers sheet
+    ใช้ env var: RAILWAY_BOT_URL, INTERNAL_API_KEY
+    """
+    import os
+    try:
+        import requests as _req
+    except ImportError:
+        print("   [customer-sync] requests not installed — skip")
+        return 0
+
+    bot_url = os.environ.get("RAILWAY_BOT_URL", "").rstrip("/")
+    api_key = os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
+
+    if not bot_url:
+        print("   [customer-sync] RAILWAY_BOT_URL not set — skip")
+        return 0
+
+    try:
+        r = _req.get(
+            f"{bot_url}/api/customers",
+            headers={"X-API-Key": api_key},
+            timeout=15,
+        )
+        if r.status_code == 403:
+            print("   [customer-sync] ❌ Unauthorized — check INTERNAL_API_KEY")
+            return 0
+        r.raise_for_status()
+        data = r.json()
+        customers = data.get("customers", [])
+        if not customers:
+            print("   [customer-sync] ไม่มีลูกค้าลงทะเบียนบน Railway")
+            return 0
+
+        import appointment_db as adb
+        updated = 0
+        for c in customers:
+            uid = c.get("line_user_id")
+            hn  = c.get("hn")
+            if uid and hn:
+                adb.register_customer(
+                    line_user_id=uid,
+                    hn=hn,
+                    owner_name=c.get("owner_name") or "",
+                    pet_name=c.get("pet_name") or "",
+                    phone=c.get("phone") or "",
+                )
+                updated += 1
+        print(f"   [customer-sync] ✅ synced {updated} customers จาก Railway")
+        return updated
+    except Exception as e:
+        print(f"   [customer-sync] ⚠️ error: {e}")
+        return 0
+
+
 def main():
     args = set(sys.argv[1:])
     fetch_fresh = "--fetch" in args
@@ -247,12 +302,15 @@ def main():
         print(f"❌ {XLSX.name} missing — run init_appointments_xlsx.py first")
         sys.exit(1)
 
+    # 0. sync customer registrations จาก Railway bot
+    sync_customers_from_railway()
+
     # 1. ดึง DRX → DRX_Appointments
     drx = load_drx_appointments()
     print(f"   loaded {len(drx)} appointments จาก DRX")
     write_drx_sheet(drx)
 
-    # 2. รวมเข้า Send_Queue
+    # 2. รวมเข้า Send_Queue (ดึง line_user_id จาก Customers sheet อัตโนมัติ)
     added, total = collect_send_queue()
     print(f"   Send_Queue: +{added} new (จาก {total} candidates ในช่วง T..T+5)")
 
