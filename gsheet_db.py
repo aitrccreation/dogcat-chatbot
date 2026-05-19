@@ -32,10 +32,18 @@ LOG_HEADERS = [
     "timestamp", "event", "hn", "line_user_id", "detail", "result",
 ]
 
+SEND_QUEUE_HEADERS = [
+    "queue_id", "appt_date", "appt_time", "hn", "owner_name", "pet_name",
+    "vet", "service", "line_user_id", "status",
+    "sent_round_1_at", "sent_round_2_at", "sent_round_3_at",
+    "response_at", "response", "source",
+]
+
 _wb = None
 _sheet = None
 _responses_sheet = None
 _log_sheet = None
+_queue_sheet = None
 _init_attempted = False
 _disabled = False
 
@@ -46,7 +54,7 @@ def _now_iso() -> str:
 
 def _init_workbook():
     """เปิด workbook + เตรียม 3 worksheets: Customers, Responses, Log"""
-    global _wb, _sheet, _responses_sheet, _log_sheet, _init_attempted, _disabled
+    global _wb, _sheet, _responses_sheet, _log_sheet, _queue_sheet, _init_attempted, _disabled
     if _disabled:
         return None
     if _wb is not None:
@@ -96,11 +104,12 @@ def _init_workbook():
                 ws.append_row(headers)
                 return ws
 
-        _sheet           = _get_or_create_ws("Customers", HEADERS)
-        _responses_sheet = _get_or_create_ws("Responses", RESPONSES_HEADERS)
-        _log_sheet       = _get_or_create_ws("Log",       LOG_HEADERS)
+        _sheet           = _get_or_create_ws("Customers",  HEADERS)
+        _responses_sheet = _get_or_create_ws("Responses",  RESPONSES_HEADERS)
+        _log_sheet       = _get_or_create_ws("Log",        LOG_HEADERS)
+        _queue_sheet     = _get_or_create_ws("Send_Queue", SEND_QUEUE_HEADERS)
 
-        log.info("[gsheet] connected — 3 sheets ready (Customers, Responses, Log)")
+        log.info("[gsheet] connected — 4 sheets ready (Customers, Responses, Log, Send_Queue)")
         return _wb
     except Exception as e:
         log.exception(f"[gsheet] init failed: {e}")
@@ -125,6 +134,12 @@ def _get_log():
     if _init_workbook() is None:
         return None
     return _log_sheet
+
+
+def _get_queue():
+    if _init_workbook() is None:
+        return None
+    return _queue_sheet
 
 
 def is_enabled() -> bool:
@@ -279,6 +294,26 @@ def get_all_responses() -> list[dict]:
         return ws.get_all_records()
     except Exception:
         return []
+
+
+def sync_send_queue(rows: list[list]) -> bool:
+    """เขียน Send_Queue ทั้งหมดลง Google Sheet (overwrite)
+    rows: list of lists ตามลำดับ SEND_QUEUE_HEADERS
+    """
+    ws = _get_queue()
+    if not ws:
+        return False
+    try:
+        ws.clear()
+        ws.append_row(SEND_QUEUE_HEADERS)
+        if rows:
+            # batch update — เร็วกว่าการ append ทีละแถว
+            ws.append_rows(rows, value_input_option="USER_ENTERED")
+        log.info(f"[gsheet] synced {len(rows)} send_queue rows to Google Sheet")
+        return True
+    except Exception as e:
+        log.warning(f"[gsheet] sync_send_queue error: {e}")
+        return False
 
 
 if __name__ == "__main__":

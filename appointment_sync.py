@@ -357,6 +357,23 @@ def main():
     added, total = collect_send_queue()
     print(f"   Send_Queue: +{added} new (จาก {total} candidates ในช่วง T..T+5)")
 
+    # 2b. mirror Send_Queue ไป Google Sheet (persistent + view in browser)
+    try:
+        import gsheet_db
+        if gsheet_db.is_enabled():
+            from openpyxl import load_workbook
+            wb2 = load_workbook(XLSX)
+            ws2 = wb2["Send_Queue"]
+            rows = []
+            for r in ws2.iter_rows(min_row=2, values_only=True):
+                if r[0]:  # มี queue_id
+                    rows.append([str(v) if v is not None else "" for v in r])
+            ok = gsheet_db.sync_send_queue(rows)
+            if ok:
+                print(f"   [gsheet] ✅ mirrored {len(rows)} Send_Queue rows to Google Sheet")
+    except Exception as e:
+        print(f"   [gsheet] ⚠️ sync_send_queue error: {e}")
+
     # 3. log
     try:
         import appointment_db as adb
