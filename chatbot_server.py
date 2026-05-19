@@ -1170,10 +1170,34 @@ REGISTER_TRIGGERS = [
     "สมัครรับนัด", "ผูกบัญชี", "ผูก hn", "เชื่อม hn",
 ]
 
+# ── Rich Menu ปุ่มขวา: "ติดต่อคลินิก" ──
+CONTACT_CLINIC_TRIGGERS = [
+    "ติดต่อคลินิก", "ติดต่อ clinic", "contact",
+    "เบอร์โทรคลินิก", "โทรหาคลินิก",
+]
+
+CONTACT_CLINIC_REPLY = (
+    "📞 ติดต่อ Dog and Cat Lovely\n"
+    "━━━━━━━━━━━━━━━━━━\n\n"
+    f"🏥 สาขาราชวิถี (นครปฐม)\n"
+    f"   📞 {CLINIC_PHONE}\n"
+    f"   📍 139/6 ถ.ราชวิถีพระปฐมเจดีย์\n\n"
+    f"🏥 สาขาหลังม.ศิลปากร\n"
+    f"   📞 {CLINIC_PHONE2}\n\n"
+    f"⏰ เปิดทุกวัน 08:30 – 20:30 น.\n\n"
+    f"💬 LINE OA: @dogcatlovely\n"
+    f"   {CLINIC_LINE_URL}"
+)
+
 
 def _is_register_trigger(text: str) -> bool:
     t = (text or "").strip().lower()
     return any(trig.lower() in t for trig in REGISTER_TRIGGERS)
+
+
+def _is_contact_clinic_trigger(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return any(trig.lower() in t for trig in CONTACT_CLINIC_TRIGGERS)
 
 
 def handle_register_flow(sess: dict, user_id: str, user_text: str):
@@ -1294,6 +1318,10 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
         remaining = int(sess["handoff_until"] - datetime.now().timestamp())
         log.info(f"[{user_id}] handoff cooldown {remaining}s remaining — skip")
         return None
+
+    # ── 0.4 Rich Menu ปุ่มขวา: "ติดต่อคลินิก" ──
+    if _is_contact_clinic_trigger(user_text):
+        return {"text": CONTACT_CLINIC_REPLY, "images": []}
 
     # ── 0.5 Registration flow (HN ↔ LINE userId mapping) ──
     register_reply = handle_register_flow(sess, user_id, user_text)
