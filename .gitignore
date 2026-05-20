@@ -2,6 +2,15 @@
 email_sender.py
 .env
 *.env
+google_creds*.json
+*_creds.json
+*.pem
+*.key
+scheduler_log.txt
+stock_capture.json
+daily_post*.json
+check_confirms.py
+daily_post.py
 
 # DRX data (ข้อมูลสัตว์ไข้ลับ — local cache only)
 drx_data.json

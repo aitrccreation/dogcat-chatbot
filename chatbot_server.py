@@ -74,7 +74,7 @@ except Exception as _e:
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_TOKEN", "")
 LINE_CHANNEL_SECRET       = os.environ.get("LINE_SECRET", "")
 FB_PAGE_ACCESS_TOKEN      = os.environ.get("FB_TOKEN",  "")
-FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_2026")
+FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_2026")  # set FB_VERIFY env var in production
 # Lovely Bot → แจ้งเตือน admin เมื่อบอทตอบไม่ได้
 LOVELY_BOT_TOKEN          = os.environ.get("LOVELY_BOT_TOKEN", "")
 ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "")
@@ -93,6 +93,15 @@ DATA_FILE                 = Path(__file__).parent / "drx_data.json"
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 # ──────────────────────────────────────────────
@@ -671,8 +680,9 @@ def line_reply_flex(reply_token: str, flex: dict):
 
 def verify_line_signature(body: bytes, signature: str) -> bool:
     """ยืนยัน LINE webhook signature"""
-    if not LINE_CHANNEL_SECRET or LINE_CHANNEL_SECRET == "YOUR_LINE_CHANNEL_SECRET":
-        return True  # dev mode: skip verification
+    if not LINE_CHANNEL_SECRET:
+        log.error("[Security] LINE_CHANNEL_SECRET not set — rejecting webhook")
+        return False
     expected = hmac.new(
         LINE_CHANNEL_SECRET.encode("utf-8"),
         body, hashlib.sha256
@@ -1790,7 +1800,10 @@ except Exception as _e:
 
 @app.route("/run_summary_now", methods=["GET"])
 def run_summary_now():
-    """ทดสอบรัน daily summary ทันที (manual trigger) — return error trace"""
+    """ทดสอบรัน daily summary ทันที (manual trigger) — protected by INTERNAL_API_KEY"""
+    key = request.headers.get("X-API-Key", request.args.get("key", ""))
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
     import traceback
     try:
         import scheduler as _s
