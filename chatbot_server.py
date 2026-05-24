@@ -91,6 +91,7 @@ PUBLIC_BASE_URL           = os.environ.get("PUBLIC_BASE_URL", f"https://{NGROK_D
 DATA_FILE                 = Path(__file__).parent / "drx_data.json"
 
 app = Flask(__name__)
+app.json.ensure_ascii = False  # ให้ภาษาไทยแสดงตรงๆ ไม่ escape เป็น \uXXXX
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
@@ -1784,18 +1785,23 @@ def test_reset():
 
 # ──────────────────────────────────────────────
 #  START SCHEDULER (Daily Summary)
-#  ทำงานเมื่อ Flask app ถูก import (ทั้ง direct run และ gunicorn)
+#  รันเฉพาะบนเครื่อง Local PC เท่านั้น
+#  Railway ไม่รัน scheduler (ป้องกันส่ง LINE ซ้ำ 2 ครั้ง)
 # ──────────────────────────────────────────────
 _scheduler_instance = None
-try:
-    import scheduler as _scheduler_mod
-    _scheduler_instance = _scheduler_mod.start_scheduler()
-    if _scheduler_instance:
-        log.info("Daily summary scheduler started")
-    else:
-        log.warning("Daily summary scheduler not started (missing deps?)")
-except Exception as _e:
-    log.warning(f"Could not start scheduler: {_e}")
+_is_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+if _is_railway:
+    log.info("Railway environment detected — scheduler DISABLED (summary sent from local PC only)")
+else:
+    try:
+        import scheduler as _scheduler_mod
+        _scheduler_instance = _scheduler_mod.start_scheduler()
+        if _scheduler_instance:
+            log.info("Daily summary scheduler started (Local PC mode)")
+        else:
+            log.warning("Daily summary scheduler not started (missing deps?)")
+    except Exception as _e:
+        log.warning(f"Could not start scheduler: {_e}")
 
 
 @app.route("/run_summary_now", methods=["GET"])
@@ -1899,14 +1905,24 @@ def api_test_drx():
         return jsonify({"error": str(e), "trace": traceback.format_exc()[-500:]}), 500
 
 
-@app.route("/api/run/<job>", methods=["GET", "POST"])
+@app.route("/api/run/<job>", methods=["GET", "POST", "OPTIONS"])
 def api_run_job(job: str):
     """Manual trigger สำหรับ scheduled jobs — protected by INTERNAL_API_KEY
     job: drx | queue | send
     """
+    # CORS preflight + allow local dashboard HTML to call
+    if request.method == "OPTIONS":
+        resp = jsonify({"ok": True})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Key"
+        return resp
+
     key = request.headers.get("X-API-Key", "") or request.args.get("key", "")
     if key != INTERNAL_API_KEY:
-        return jsonify({"error": "unauthorized"}), 403
+        resp = jsonify({"error": "unauthorized"})
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp, 403
     import io as _io
     import sys as _sys
     # Capture stdout to return it in response (debug)
@@ -1930,20 +1946,26 @@ def api_run_job(job: str):
             import appointment_sync
             appointment_sync.run_drx_sync(fetch_fresh=True)
         else:
-            return jsonify({"error": f"unknown job: {job}"}), 400
-        return jsonify({
+            resp = jsonify({"error": f"unknown job: {job}"})
+            resp.headers["Access-Control-Allow-Origin"] = "*"
+            return resp, 400
+        resp = jsonify({
             "ok": True,
             "job": job,
             "stats": result,
             "output": captured.getvalue()[-2000:],   # ล่าสุด 2000 chars
         })
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp
     except Exception as e:
         import traceback
-        return jsonify({
+        resp = jsonify({
             "error": str(e),
             "trace": traceback.format_exc()[-500:],
             "output": captured.getvalue()[-2000:],
-        }), 500
+        })
+        resp.headers["Access-Control-Allow-Origin"] = "*"
+        return resp, 500
     finally:
         _sys.stdout = old_stdout
 
@@ -2000,8 +2022,10 @@ def api_customers():
 # ──────────────────────────────────────────────
 if __name__ == "__main__":
     import sys, io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    if sys.stdout and hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+    if sys.stderr and hasattr(sys.stderr, "buffer"):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
     port = int(os.environ.get("PORT", 5000))
     debug_mode = os.environ.get("FLASK_DEBUG", "false").lower() == "true"
