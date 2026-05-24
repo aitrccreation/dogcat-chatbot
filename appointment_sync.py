@@ -194,6 +194,24 @@ def collect_send_queue():
         if str(row[9] or "").lower() == "confirmed":
             existing_confirmed.add(key)
 
+    # ── cleanup: mark expired rows (appt_date < today) as Expired ──
+    expired_count = 0
+    for row_idx, row in enumerate(ws_q.iter_rows(min_row=2, values_only=True), start=2):
+        if not row[0]: continue
+        appt_d_str = str(row[1] or "")[:10]
+        status_val = str(row[9] or "").strip()
+        r1_val = str(row[10] or "").strip()
+        if status_val in ("Expired", "Sent", "Confirmed", "Reschedule", "Cancel"): continue
+        try:
+            appt_d = datetime.strptime(appt_d_str, "%Y-%m-%d").date()
+            if appt_d < today:
+                ws_q.cell(row=row_idx, column=10, value="Expired")
+                expired_count += 1
+        except Exception:
+            pass
+    if expired_count:
+        print(f"   🗑️  Mark Expired: {expired_count} rows (นัดผ่านแล้ว)")
+
     # collect candidates
     skipped_by_service: list[dict] = []
 
@@ -231,31 +249,56 @@ def collect_send_queue():
 
     drx_appts    = collect_from_sheet("DRX_Appointments", "drx")
     manual_appts = collect_from_sheet("Manual", "manual")
-    candidates = drx_appts + manual_appts
+    raw_candidates = drx_appts + manual_appts
 
     if skipped_by_service:
         print(f"   ⏭  ข้าม {len(skipped_by_service)} รายการ (บริการที่ไม่ต้องเตือน):")
         for s in skipped_by_service:
             print(f"      - {s['appt_date']} HN={s['hn']} น้อง{s['pet']} | {s['service']}")
 
-    # update Send_Queue
-    next_qid = max([row[0] for row in ws_q.iter_rows(min_row=2, values_only=True) if row[0]] or [0]) + 1
+    # ── MERGE: รวม service หลายรายการต่อ HN+วันเดียวกันเป็น 1 entry ──
+    # ป้องกันส่ง LINE หลายข้อความเมื่อ DRX มีหลาย service ในนัดเดียว
+    merged: dict[tuple[str, str], dict] = {}
+    for a in raw_candidates:
+        key = (a["hn"], a["appt_date"])
+        if key not in merged:
+            merged[key] = dict(a)
+        else:
+            # รวม service โดยไม่ซ้ำ
+            existing_svcs = [s.strip() for s in merged[key]["service"].split(" / ")]
+            new_svc = a["service"].strip()
+            if new_svc and new_svc not in existing_svcs:
+                existing_svcs.append(new_svc)
+                merged[key]["service"] = " / ".join(existing_svcs)
+    candidates = list(merged.values())
+    if len(raw_candidates) != len(candidates):
+        print(f"   🔀  Merged: {len(raw_candidates)} DRX rows → {len(candidates)} queue entries (รวม service ซ้ำ HN+วัน)")
+
+    # ── update Send_Queue ──
+    next_qid = max([row[0] for row in ws_q.iter_rows(min_row=2, values_only=True) if row[0] and isinstance(row[0], int)] or [0]) + 1
     added = 0
     for a in candidates:
         key = (a["hn"], a["appt_date"])
         if key in existing_keys:
-            # update existing row (เผื่อข้อมูล DRX update)
+            # update existing row — รวม service ใหม่เข้าไปด้วยถ้ายังไม่มี
             row_idx = existing_keys[key]
-            ws_q.cell(row=row_idx, column=2, value=a["appt_date"])
-            ws_q.cell(row=row_idx, column=3, value=a["appt_time"])
+            cur_svc = str(ws_q.cell(row=row_idx, column=8).value or "")
+            new_svc = a["service"]
+            if cur_svc != new_svc:
+                # merge: เพิ่ม service ที่ยังไม่มีใน existing row
+                cur_parts = [s.strip() for s in cur_svc.split(" / ") if s.strip()]
+                for part in [s.strip() for s in new_svc.split(" / ") if s.strip()]:
+                    if part not in cur_parts:
+                        cur_parts.append(part)
+                ws_q.cell(row=row_idx, column=8, value=" / ".join(cur_parts))
             ws_q.cell(row=row_idx, column=5, value=a["owner_name"])
             ws_q.cell(row=row_idx, column=6, value=a["pet_name"])
             ws_q.cell(row=row_idx, column=7, value=a["vet"])
-            ws_q.cell(row=row_idx, column=8, value=a["service"])
             # update line_user_id ถ้าลูกค้าเพิ่งลงทะเบียน
             user_id = hn_to_userid.get(a["hn"], "")
             if user_id and not ws_q.cell(row=row_idx, column=9).value:
                 ws_q.cell(row=row_idx, column=9, value=user_id)
+                ws_q.cell(row=row_idx, column=10, value="Pending")
             continue
         # new row
         user_id = hn_to_userid.get(a["hn"], "")
@@ -268,7 +311,7 @@ def collect_send_queue():
             "", "",          # response_at, response
             a["source"],
         ])
-        existing_keys[key] = ws_q.max_row   # ✅ กันไม่ให้ DRX หลาย service ต่อ HN+วันเดียวกัน เพิ่มซ้ำ
+        existing_keys[key] = ws_q.max_row   # ✅ กันไม่ให้เพิ่มซ้ำในรอบเดียวกัน
         next_qid += 1
         added += 1
 

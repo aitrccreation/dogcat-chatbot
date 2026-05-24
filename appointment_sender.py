@@ -17,7 +17,7 @@ import sys
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+if sys.stdout and hasattr(sys.stdout, "buffer") and sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 try:
@@ -259,8 +259,11 @@ def main():
     ws = wb["Send_Queue"]
     today = date.today()
 
-    stats = {"sent_r1": 0, "sent_r2": 0, "sent_r3": 0, "skip": 0, "noline": 0, "error": 0}
+    stats = {"sent_r1": 0, "sent_r2": 0, "sent_r3": 0, "skip": 0, "skip_service": 0, "noline": 0, "error": 0}
     noline_rows: list[dict] = []
+
+    # บริการที่ไม่ต้องส่งเตือน (ตามที่ admin กำหนด)
+    SKIP_SERVICE_KEYWORDS = ("โทร",)   # โทรสอบถาม/โทรถามอาการ — ไม่ใช่บริการจริง
 
     for row_idx in range(2, ws.max_row + 1):
         qid           = ws.cell(row=row_idx, column=1).value
@@ -287,9 +290,21 @@ def main():
 
         days_until = (appt_d - today).days
 
-        # Skip terminal states
-        if status in ("Confirmed",):
+        # Auto-expire rows ที่นัดผ่านแล้ว (days_until < 0)
+        if days_until < 0 and status not in ("Sent", "Confirmed", "Reschedule", "Expired", "Cancel"):
+            ws.cell(row=row_idx, column=10, value="Expired")
             stats["skip"] += 1
+            continue
+
+        # Skip terminal / expired states
+        if status in ("Confirmed", "Expired", "Cancel"):
+            stats["skip"] += 1
+            continue
+
+        # Skip บริการที่ไม่ต้องเตือน (โทรสอบถาม / โทรถาม)
+        if any(k in str(service) for k in SKIP_SERVICE_KEYWORDS):
+            stats["skip_service"] += 1
+            print(f"  ⏭  qid={qid} HN={hn} น้อง{pet} — ข้าม (บริการ: {str(service)[:50]})")
             continue
 
         # Skip ที่ไม่ได้ลงทะเบียน — เก็บไว้แจ้ง admin
