@@ -171,15 +171,23 @@ def collect_send_queue():
         return any(k in s for k in SKIP_KEYWORDS)
 
     # Customer map: HN → comma-joined line_user_ids (สูงสุด MAX_USERS_PER_HN)
+    # ข้าม UIDs ที่ถูก block / ลบบัญชี (note มี "LINE_BLOCKED")
     ws_c = wb["Customers"]
     hn_to_uids: dict[str, list[str]] = {}
+    blocked_uid_count = 0
     for row in ws_c.iter_rows(min_row=2, values_only=True):
         if row[1] and row[0]:
+            uid  = str(row[0]).strip()
+            note = str(row[8] or "").strip() if len(row) > 8 else ""
+            if "LINE_BLOCKED" in note:
+                blocked_uid_count += 1
+                continue   # UID นี้ส่งไม่ได้ — user block bot หรือลบบัญชีแล้ว
             hn_key = str(row[1]).strip()
             hn_to_uids.setdefault(hn_key, [])
-            uid = str(row[0]).strip()
             if uid not in hn_to_uids[hn_key]:
                 hn_to_uids[hn_key].append(uid)
+    if blocked_uid_count:
+        print(f"   🚫 Skip {blocked_uid_count} LINE UIDs ที่ถูก block/ลบบัญชี")
     # รวมเป็น string "uid1,uid2" สำหรับใส่ใน queue
     hn_to_userid: dict[str, str] = {hn: ",".join(uids) for hn, uids in hn_to_uids.items()}
 
@@ -528,6 +536,64 @@ def backfill_customer_names():
         print(f"   [backfill] error: {e}")
 
 
+def verify_all_line_uids():
+    """ตรวจ LINE UID ของลูกค้าทุกรายว่ายังใช้งานได้อยู่ไหม
+    - ถ้า block/ลบบัญชี → เพิ่ม 'LINE_BLOCKED' ใน note
+    - ถ้า valid อีกครั้ง → ล้าง LINE_BLOCKED ออก
+    - ถ้าไม่มี token หรือ network error → ข้าม (ไม่ตัดสิน)
+    """
+    try:
+        import os
+        import appointment_db as adb
+        token = (os.environ.get("LINE_OA_TOKEN") or os.environ.get("LINE_TOKEN", "")).strip()
+        if not token:
+            print("   [verify-uid] ⚠️ ไม่มี LINE_OA_TOKEN — ข้ามการตรวจ UID")
+            return
+
+        all_customers = adb.get_all_customers()
+        if not all_customers:
+            return
+        print(f"   🔍 Verify LINE UIDs: {len(all_customers)} customers...")
+        blocked_new = 0
+        unblocked   = 0
+        skip_err    = 0
+
+        for cust in all_customers:
+            uid  = cust.get("line_user_id")
+            note = str(cust.get("note") or "")
+            if not uid:
+                continue
+
+            is_valid = adb.verify_line_uid(uid, token)
+            if is_valid is None:
+                skip_err += 1
+                continue   # network error / rate limit — ไม่ตัดสิน
+
+            if is_valid is False:
+                if "LINE_BLOCKED" not in note:
+                    new_note = (note + " LINE_BLOCKED").strip() if note else "LINE_BLOCKED"
+                    adb.update_customer_note(uid, new_note)
+                    print(f"      🚫 UID {uid[:10]}... HN={cust.get('hn')} → LINE_BLOCKED")
+                    adb.log_event("LineBlock", cust.get("hn",""), uid, "user block/ลบบัญชี", "WARN")
+                    blocked_new += 1
+            else:
+                # valid — ถ้าเคย blocked ให้ล้างออก
+                if "LINE_BLOCKED" in note:
+                    new_note = note.replace("LINE_BLOCKED", "").strip()
+                    adb.update_customer_note(uid, new_note)
+                    print(f"      ✅ UID {uid[:10]}... HN={cust.get('hn')} → unblocked")
+                    adb.log_event("LineUnblock", cust.get("hn",""), uid, "valid อีกครั้ง", "OK")
+                    unblocked += 1
+
+        parts = []
+        if blocked_new: parts.append(f"blocked ใหม่ {blocked_new} ราย")
+        if unblocked:   parts.append(f"unblocked {unblocked} ราย")
+        if skip_err:    parts.append(f"ข้าม {skip_err} (network)")
+        print(f"   [verify-uid] {'เสร็จ: ' + ', '.join(parts) if parts else 'ไม่มีการเปลี่ยนแปลง'}")
+    except Exception as e:
+        print(f"   [verify-uid] error: {e}")
+
+
 def run_drx_sync(fetch_fresh: bool = True):
     """ดึง DRX → DRX_Appointments + mirror ไป Google Sheet"""
     print("─── DRX SYNC ───")
@@ -539,6 +605,8 @@ def run_drx_sync(fetch_fresh: bool = True):
     _mirror_drx_to_gsheet()
     # backfill ชื่อลูกค้าที่ลงทะเบียนแต่ยังไม่มีข้อมูลใน DRX
     backfill_customer_names()
+    # ตรวจ LINE UID ของลูกค้าทุกราย (block/ลบบัญชี → mark LINE_BLOCKED)
+    verify_all_line_uids()
     try:
         import appointment_db as adb
         adb.log_event("DRX_Sync", "", "", f"DRX:{len(drx)}", "OK")

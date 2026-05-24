@@ -175,6 +175,50 @@ def get_all_customers() -> list[dict]:
         return result
 
 
+# ───── LINE UID verification ─────
+def verify_line_uid(line_user_id: str, token: str = "") -> bool | None:
+    """ตรวจว่า LINE user ID นี้ยังใช้งานได้อยู่ (ไม่ block, ไม่ถูกลบ)
+    Returns:
+        True  = UID valid, bot สามารถส่งได้
+        False = UID invalid / user block bot / account deleted
+        None  = ไม่สามารถตรวจได้ (ไม่มี token หรือ network error)
+    """
+    import os
+    if not token:
+        token = (os.environ.get("LINE_OA_TOKEN") or os.environ.get("LINE_TOKEN", "")).strip()
+    if not token or not line_user_id:
+        return None
+    try:
+        import requests
+        r = requests.get(
+            f"https://api.line.me/v2/bot/profile/{line_user_id}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=8,
+        )
+        if r.status_code == 200:
+            return True
+        if r.status_code in (400, 404):
+            return False   # UID ไม่มี หรือ block bot
+        return None        # error อื่น (rate limit, server error) → ไม่ตัดสิน
+    except Exception:
+        return None
+
+
+def update_customer_note(line_user_id: str, note: str):
+    """อัพเดต note field ใน Customers sheet สำหรับ user นี้"""
+    with _lock:
+        wb = _load()
+        ws = wb["Customers"]
+        for row in ws.iter_rows(min_row=2):
+            if row[0].value == line_user_id:
+                # note อยู่ที่ column 9 (index 8)
+                row[8].value = note
+                row[7].value = _now_iso()   # last_active
+                _save(wb)
+                return True
+    return False
+
+
 # ───── HN validator ─────
 HN_PATTERN = re.compile(r"^\d{6}-\d+$")    # e.g. "690200-1"
 HN_PATTERN_ALT = re.compile(r"^HN-?\d+(-\d+)?$", re.IGNORECASE)
