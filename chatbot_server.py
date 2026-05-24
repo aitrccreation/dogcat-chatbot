@@ -1339,17 +1339,11 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
         drx_available = (Path(__file__).parent / "drx_data.json").exists()
 
         if drx_available and not info:
-            # มีไฟล์ DRX แต่ไม่เจอ HN → แจ้งให้ตรวจสอบ
-            return {
-                "text": (
-                    f"❓ ไม่พบ HN {hn} ในระบบค่ะ\n"
-                    f"กรุณาตรวจสอบเลขอีกครั้ง หรือสอบถามที่คลินิก:\n"
-                    f"📞 080-4288181 (ราชวิถี) / 090-1556446 (ม.ศิลปากร)\n\n"
-                    f"หากต้องการลองส่งเลขอื่น พิมพ์ได้เลยค่ะ\n"
-                    f"หรือพิมพ์ \"ยกเลิก\" เพื่อออก"
-                ),
-                "images": [],
-            }
+            # HN ไม่พบใน DRX ตอนนี้ (อาจเป็นลูกค้าใหม่ที่ยังไม่มีข้อมูลเข้าระบบ)
+            # → ลงทะเบียนไว้ก่อน ระบบจะ backfill ชื่อเมื่อ DRX sync ครั้งถัดไป
+            info = {"_pending_drx_match": True}
+            log.info(f"[Register] HN {hn} not in DRX yet — register pending, will backfill on next sync")
+
         # ไม่มีไฟล์ DRX (Railway) → รับ HN ได้เลย ไม่บล็อก
         if not info:
             info = {}
@@ -1378,16 +1372,20 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
         )
         sess["register_step"] = None
 
-        owner_txt = info.get("owner_name") or "-"
-        pet_txt   = info.get("pet_name")   or "-"
-        detail    = (
-            f"  HN: {hn}\n"
-            f"  เจ้าของ: {owner_txt}\n"
-            f"  น้อง: {pet_txt}\n\n"
-        ) if info.get("owner_name") else (
-            f"  HN: {hn}\n\n"
-            "📌 เจ้าหน้าที่จะอัปเดตชื่อเจ้าของและน้องในระบบภายหลังค่ะ\n\n"
-        )
+        owner_txt = info.get("owner_name") or ""
+        pet_txt   = info.get("pet_name")   or ""
+        if owner_txt or pet_txt:
+            detail = (
+                f"  HN: {hn}\n"
+                f"  เจ้าของ: {owner_txt or '-'}\n"
+                f"  น้อง: {pet_txt or '-'}\n\n"
+            )
+        else:
+            # ลูกค้าใหม่หรือ HN ยังไม่มีข้อมูลใน DRX
+            detail = (
+                f"  HN: {hn}\n\n"
+                "📌 ระบบจะดึงชื่อเจ้าของและน้องจากฐานข้อมูลให้อัตโนมัติค่ะ\n\n"
+            )
 
         return {
             "text": (

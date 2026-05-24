@@ -495,6 +495,39 @@ def _mirror_queue_to_gsheet():
         print(f"   [gsheet] ⚠️ sync_send_queue error: {e}")
 
 
+def backfill_customer_names():
+    """หลัง DRX sync — ค้นหา customers ที่ลงทะเบียน HN ไว้แต่ยังไม่มีชื่อ
+    แล้ว backfill owner_name / pet_name จาก drx_data.json อัตโนมัติ
+    """
+    try:
+        import appointment_db as adb
+        all_customers = adb.get_all_customers()
+        pending = [c for c in all_customers
+                   if c.get("hn") and not (c.get("owner_name") or c.get("pet_name"))]
+        if not pending:
+            return
+        print(f"   🔄 Backfill: {len(pending)} customers ที่ยังไม่มีชื่อ...")
+        filled = 0
+        for cust in pending:
+            hn = cust["hn"]
+            info = adb.verify_hn_with_drx(hn)
+            if not info or not info.get("owner_name"):
+                continue
+            # อัพเดต
+            adb.register_customer(
+                line_user_id=cust["line_user_id"],
+                hn=hn,
+                owner_name=info.get("owner_name", ""),
+                pet_name=info.get("pet_name", ""),
+            )
+            print(f"      ✅ HN {hn} → {info.get('pet_name','')} / {info.get('owner_name','')}")
+            filled += 1
+        if filled:
+            print(f"   ✅ Backfill สำเร็จ {filled} ราย")
+    except Exception as e:
+        print(f"   [backfill] error: {e}")
+
+
 def run_drx_sync(fetch_fresh: bool = True):
     """ดึง DRX → DRX_Appointments + mirror ไป Google Sheet"""
     print("─── DRX SYNC ───")
@@ -504,6 +537,8 @@ def run_drx_sync(fetch_fresh: bool = True):
     print(f"   loaded {len(drx)} appointments จาก DRX")
     write_drx_sheet(drx)
     _mirror_drx_to_gsheet()
+    # backfill ชื่อลูกค้าที่ลงทะเบียนแต่ยังไม่มีข้อมูลใน DRX
+    backfill_customer_names()
     try:
         import appointment_db as adb
         adb.log_event("DRX_Sync", "", "", f"DRX:{len(drx)}", "OK")
