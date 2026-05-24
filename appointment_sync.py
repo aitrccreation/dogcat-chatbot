@@ -69,9 +69,12 @@ def fetch_drx_if_needed(force: bool = False):
             print(f"[ERROR] drx_bridge failed: {e}")
 
 
+SKIP_DRX_STATUSES = ("มาตามนัด", "ยกเลิกนัดหมาย")
+
+
 def load_drx_appointments() -> list[dict]:
-    """อ่าน _raw.appointments + _raw.calendar จาก drx_data.json
-    Return: list of {appt_id, hn, owner_name, pet_name, vet, service, appt_date, appt_time}
+    """อ่าน _raw.appointments (grid op=36) จาก drx_data.json
+    Return: list of {appt_id, hn, owner_name, pet_name, vet, service, appt_date, appt_time, drx_status}
     """
     if not DRX_JSON.exists():
         print("❌ drx_data.json missing — run drx_bridge.py first")
@@ -80,8 +83,9 @@ def load_drx_appointments() -> list[dict]:
 
     raw = data.get("_raw", {}) or {}
     appts = []
+    skipped_status = []
 
-    # Source 1: _raw.appointments (grid op=36) — มีรายละเอียดครบ
+    # Source: _raw.appointments (grid op=36) — มี cell[16] = drx_status
     for r in raw.get("appointments", []):
         if not isinstance(r, dict):
             continue
@@ -89,32 +93,40 @@ def load_drx_appointments() -> list[dict]:
         if len(cells) < 13:
             continue
         # cell layout:
-        # [0] date "17 พ.ค. 2569"
-        # [5] "pet/owner" — แต่ใน DRX จริง คือ "owner ชื่อ" + pet ใน cell อื่น
-        # [6] phone "08xxxxxxxx"
-        # [8] service category "ตรวจทั่วไป"
-        # [9] service detail
-        # [11] HN "690200-1"
-        # [12] vet name
+        # [0] date   [5] "pet/owner"  [8] service category  [9] service detail
+        # [11] HN    [12] hospital    [13] doctor            [16] status text
         appt_date = parse_thai_date(str(cells[0]))
         if not appt_date:
+            continue
+        drx_status = str(cells[16]).strip() if len(cells) > 16 and cells[16] else ""
+        if drx_status in SKIP_DRX_STATUSES:
+            skipped_status.append(f"{cells[5]} [{drx_status}]")
             continue
         pet_owner = str(cells[5]) if len(cells) > 5 else ""
         if "/" in pet_owner:
             pet, owner = pet_owner.split("/", 1)
         else:
             pet, owner = pet_owner, ""
+        vet_doctor   = str(cells[13]) if len(cells) > 13 and cells[13] else ""
+        vet_hospital = str(cells[12]) if len(cells) > 12 else ""
+        vet_name = vet_doctor if vet_doctor and vet_doctor != vet_hospital else vet_hospital
         appts.append({
             "appt_id":    f"DRX-{r.get('id', '')}",
             "hn":         str(cells[11]) if len(cells) > 11 else "",
             "owner_name": owner.strip(),
             "pet_name":   pet.strip(),
-            "vet":        str(cells[12]) if len(cells) > 12 else "",
+            "vet":        vet_name,
             "service":    f"{cells[8]} — {cells[9]}" if len(cells) > 9 else str(cells[8] if len(cells) > 8 else ""),
             "appt_date":  appt_date,
-            "appt_time":  "",   # grid view ไม่มีเวลาแน่นอน
+            "appt_time":  "",
+            "drx_status": drx_status,
             "source":     "drx",
         })
+
+    if skipped_status:
+        print(f"   ⏭  ข้าม {len(skipped_status)} รายการ (สถานะ DRX: มาตามนัด/ยกเลิก):")
+        for s in skipped_status:
+            print(f"      - {s}")
 
     return appts
 
@@ -123,13 +135,12 @@ def write_drx_sheet(appts: list[dict]):
     """เขียน DRX_Appointments sheet — overwrite ทั้ง sheet"""
     wb = load_workbook(XLSX)
     ws = wb["DRX_Appointments"]
-    # clear rows (เก็บ header)
     ws.delete_rows(2, ws.max_row)
     for a in appts:
         ws.append([
             a["appt_id"], a["hn"], a["owner_name"], a["pet_name"],
             a["vet"], a["service"], a["appt_date"], a["appt_time"],
-            a["source"], now_iso(),
+            a["source"], now_iso(), a.get("drx_status", ""),
         ])
     wb.save(XLSX)
     print(f"✅ DRX_Appointments: {len(appts)} rows")
@@ -139,6 +150,7 @@ def collect_send_queue():
     """รวม DRX + Manual → Send_Queue ที่ตรงเงื่อนไข reminder window
     เงื่อนไข: appt_date == today + 2 days (ส่งล่วงหน้า 2 วัน ครั้งเดียว)
     Skip: รายการที่อยู่ใน Send_Queue แล้วและ status=Confirmed
+    Skip: บริการที่เป็น "อื่นๆ" หรือ "โทรสอบถาม/โทรถาม" (ไม่ต้องส่งเตือน)
     """
     wb = load_workbook(XLSX)
     today = datetime.now().date()
@@ -150,6 +162,13 @@ def collect_send_queue():
             return dt == target_date  # เฉพาะ T+2
         except Exception:
             return False
+
+    SKIP_KEYWORDS = ("โทร",)   # โทรสอบถาม/โทรถามอาการ — ไม่ใช่บริการจริง ไม่ต้องเตือน
+
+    def should_skip(service: str) -> bool:
+        """True ถ้า service ตรงกับเงื่อนไขที่ไม่ต้องส่งเตือน"""
+        s = (service or "")
+        return any(k in s for k in SKIP_KEYWORDS)
 
     # Customer map: HN → comma-joined line_user_ids (สูงสุด MAX_USERS_PER_HN)
     ws_c = wb["Customers"]
@@ -176,6 +195,8 @@ def collect_send_queue():
             existing_confirmed.add(key)
 
     # collect candidates
+    skipped_by_service: list[dict] = []
+
     def collect_from_sheet(sheet_name: str, source: str):
         ws_s = wb[sheet_name]
         out = []
@@ -189,13 +210,19 @@ def collect_send_queue():
             key = (hn, appt_date)
             if key in existing_confirmed:
                 continue
+            service = str(row[5] or "")
+            if should_skip(service):
+                skipped_by_service.append({"hn": hn, "appt_date": appt_date,
+                                            "pet": str(row[3] or ""),
+                                            "service": service})
+                continue
             out.append({
                 "appt_id":    str(row[0]),
                 "hn":         hn,
                 "owner_name": str(row[2] or ""),
                 "pet_name":   str(row[3] or ""),
                 "vet":        str(row[4] or ""),
-                "service":    str(row[5] or ""),
+                "service":    service,
                 "appt_date":  appt_date,
                 "appt_time":  str(row[7] or ""),
                 "source":     source,
@@ -205,6 +232,11 @@ def collect_send_queue():
     drx_appts    = collect_from_sheet("DRX_Appointments", "drx")
     manual_appts = collect_from_sheet("Manual", "manual")
     candidates = drx_appts + manual_appts
+
+    if skipped_by_service:
+        print(f"   ⏭  ข้าม {len(skipped_by_service)} รายการ (บริการที่ไม่ต้องเตือน):")
+        for s in skipped_by_service:
+            print(f"      - {s['appt_date']} HN={s['hn']} น้อง{s['pet']} | {s['service']}")
 
     # update Send_Queue
     next_qid = max([row[0] for row in ws_q.iter_rows(min_row=2, values_only=True) if row[0]] or [0]) + 1
@@ -236,6 +268,7 @@ def collect_send_queue():
             "", "",          # response_at, response
             a["source"],
         ])
+        existing_keys[key] = ws_q.max_row   # ✅ กันไม่ให้ DRX หลาย service ต่อ HN+วันเดียวกัน เพิ่มซ้ำ
         next_qid += 1
         added += 1
 

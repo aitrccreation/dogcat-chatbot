@@ -129,29 +129,18 @@ def start_scheduler():
             misfire_grace_time=300,
         )
 
-    # 2) Appointment workflow jobs (รันบน Railway 24/7)
-    # หมายเหตุ: DRX sync ไม่ได้รันบน Railway เพราะ DRX อยู่บน clinic network — PC ต้องดึง
-    APPT_JOBS = [
-        (13, 0, run_appointment_queue_build, "Appt_Queue_Build", "Queue build (T+2)"),
-        (18, 0, run_appointment_send,        "Appt_Send_LINE",   "Send LINE reminders"),
-    ]
-    for hh, mm, fn, job_id, name in APPT_JOBS:
-        scheduler.add_job(
-            fn,
-            trigger=CronTrigger(hour=hh, minute=mm, timezone=tz),
-            id=job_id,
-            name=name,
-            replace_existing=True,
-            misfire_grace_time=300,
-        )
+    # 2) Appointment workflow jobs
+    # ⚠️  Queue build และ Send LINE ถูกจัดการโดย Windows Task Scheduler บนเครื่อง PC แล้ว
+    #     (DogCatLovely_APPT_Queue_1300 และ DogCatLovely_APPT_Send_1800)
+    #     ไม่ต้องรันซ้ำจาก APScheduler — ถ้ารันซ้ำจะส่ง LINE เบิ้ล 2 ครั้ง!
+    APPT_JOBS = []   # ว่างไว้ — Task Scheduler จัดการแทน
 
     scheduler.start()
-    total = len(SCHEDULE_TIMES) + len(APPT_JOBS)
-    log.info(f"[Scheduler] Started with {total} jobs (TZ={TZ_NAME})")
+    total = len(SCHEDULE_TIMES)
+    log.info(f"[Scheduler] Started with {total} daily summary jobs (TZ={TZ_NAME})")
+    log.info("  ℹ️  Appointment jobs ถูก disable — ใช้ Windows Task Scheduler แทน")
     for hh, mm in SCHEDULE_TIMES:
         log.info(f"  → Daily summary at {hh:02d}:{mm:02d}")
-    for hh, mm, _, _, name in APPT_JOBS:
-        log.info(f"  → {name} at {hh:02d}:{mm:02d}")
     return scheduler
 
 
