@@ -557,14 +557,10 @@ def _find_sibling_hns_from_drx(hn_base: str) -> list[dict]:
 def _auto_register_sibling_hns(adb, all_customers: list[dict]) -> int:
     """สำหรับแต่ละ customer ที่มีชื่อแล้ว → ค้นหา HN พี่น้อง (prefix เดียวกัน)
     แล้ว register_sibling_hn() ให้อัตโนมัติ — LINE UID เดิมได้รับแจ้งเตือนทุกตัว
+
+    หมายเหตุ: โหลด existing_pairs ล่าสุดจาก DB ทุกครั้ง (ไม่ใช้ snapshot)
+    เพื่อป้องกัน duplicate เมื่อ gsheet sync เปลี่ยน HN หลักระหว่าง run
     """
-    # สร้าง set (uid, hn) ที่มีอยู่แล้ว
-    existing_pairs = {
-        (c["line_user_id"], c["hn"])
-        for c in all_customers
-        if c.get("line_user_id") and c.get("hn")
-    }
-    # ประมวลผลแต่ละ uid+hn ที่มีชื่อแล้ว
     checked_bases: set[tuple[str, str]] = set()   # (uid, hn_base)
     new_count = 0
 
@@ -581,11 +577,19 @@ def _auto_register_sibling_hns(adb, all_customers: list[dict]) -> int:
             continue
         checked_bases.add(key)
 
+        # ── โหลด existing pairs ล่าสุดจาก DB ทุกครั้ง (ไม่ใช้ snapshot) ──
+        fresh_customers = adb.get_all_customers()
+        existing_pairs = {
+            (c["line_user_id"], c["hn"])
+            for c in fresh_customers
+            if c.get("line_user_id") and c.get("hn")
+        }
+
         siblings = _find_sibling_hns_from_drx(base)
         for sib in siblings:
             sib_hn = sib["hn"]
             if (uid, sib_hn) in existing_pairs:
-                continue   # มีอยู่แล้ว
+                continue   # มีอยู่แล้ว (ทั้ง primary และ auto_sibling)
             result = adb.register_sibling_hn(
                 line_user_id=uid,
                 hn=sib_hn,
@@ -595,7 +599,6 @@ def _auto_register_sibling_hns(adb, all_customers: list[dict]) -> int:
             )
             if result:
                 print(f"      🔗 Sibling HN {sib_hn} ({sib.get('pet_name','?')}) → UID ...{uid[-8:]}")
-                existing_pairs.add((uid, sib_hn))
                 new_count += 1
     return new_count
 
