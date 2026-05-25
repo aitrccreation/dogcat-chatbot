@@ -503,35 +503,137 @@ def _mirror_queue_to_gsheet():
         print(f"   [gsheet] ⚠️ sync_send_queue error: {e}")
 
 
+def _hn_base(hn: str) -> str:
+    """690131-2 → '690131'  (prefix ก่อน '-' = ตัวระบุเจ้าของ)"""
+    return hn.split("-")[0] if hn and "-" in hn else hn
+
+
+def _find_sibling_hns_from_drx(hn_base: str) -> list[dict]:
+    """ค้นหา HNs ทั้งหมดที่มี prefix เดียวกัน (เจ้าของเดียวกัน) ใน DRX data
+    เช่น hn_base='690131' → [{'hn':'690131-1','pet_name':'นมสด',...},
+                               {'hn':'690131-2','pet_name':'กาแฟ',...}]
+    """
+    if not hn_base or not DRX_JSON.exists():
+        return []
+    try:
+        data = json.loads(DRX_JSON.read_text(encoding="utf-8"))
+        raw  = data.get("_raw", {}) or {}
+        found: dict[str, dict] = {}   # hn → info
+
+        # จาก _raw.appointments
+        for r in raw.get("appointments", []):
+            if not isinstance(r, dict): continue
+            cells = r.get("cell", [])
+            if len(cells) <= 11: continue
+            hn = str(cells[11]).strip()
+            if not hn or _hn_base(hn) != hn_base: continue
+            pet_owner = str(cells[5]) if len(cells) > 5 else ""
+            pet, owner = (pet_owner.split("/", 1) if "/" in pet_owner
+                          else (pet_owner, ""))
+            phone = str(cells[6]).strip() if len(cells) > 6 else ""
+            if hn not in found:
+                found[hn] = {"hn": hn, "pet_name": pet.strip(),
+                              "owner_name": owner.strip(), "phone": phone}
+
+        # จาก _raw.cases
+        for r in raw.get("cases", []):
+            if not isinstance(r, dict): continue
+            cells = r.get("cell", [])
+            if len(cells) < 3: continue
+            hn = str(cells[2]).strip()
+            if not hn or hn in found or _hn_base(hn) != hn_base: continue
+            pet_owner = str(cells[1]) if len(cells) > 1 else ""
+            pet, owner = (pet_owner.split("/", 1) if "/" in pet_owner
+                          else (pet_owner, ""))
+            found[hn] = {"hn": hn, "pet_name": pet.strip(),
+                         "owner_name": owner.strip(), "phone": ""}
+
+        return list(found.values())
+    except Exception as e:
+        print(f"   [siblings] drx scan error: {e}")
+        return []
+
+
+def _auto_register_sibling_hns(adb, all_customers: list[dict]) -> int:
+    """สำหรับแต่ละ customer ที่มีชื่อแล้ว → ค้นหา HN พี่น้อง (prefix เดียวกัน)
+    แล้ว register_sibling_hn() ให้อัตโนมัติ — LINE UID เดิมได้รับแจ้งเตือนทุกตัว
+    """
+    # สร้าง set (uid, hn) ที่มีอยู่แล้ว
+    existing_pairs = {
+        (c["line_user_id"], c["hn"])
+        for c in all_customers
+        if c.get("line_user_id") and c.get("hn")
+    }
+    # ประมวลผลแต่ละ uid+hn ที่มีชื่อแล้ว
+    checked_bases: set[tuple[str, str]] = set()   # (uid, hn_base)
+    new_count = 0
+
+    for cust in all_customers:
+        uid   = cust.get("line_user_id", "")
+        hn    = cust.get("hn", "")
+        owner = cust.get("owner_name", "").strip()
+        # ข้ามถ้ายังไม่มีชื่อ หรือ HN ไม่มี "-"
+        if not uid or not hn or not owner or "-" not in hn:
+            continue
+        base = _hn_base(hn)
+        key  = (uid, base)
+        if key in checked_bases:
+            continue
+        checked_bases.add(key)
+
+        siblings = _find_sibling_hns_from_drx(base)
+        for sib in siblings:
+            sib_hn = sib["hn"]
+            if (uid, sib_hn) in existing_pairs:
+                continue   # มีอยู่แล้ว
+            result = adb.register_sibling_hn(
+                line_user_id=uid,
+                hn=sib_hn,
+                owner_name=sib.get("owner_name", owner),
+                pet_name=sib.get("pet_name", ""),
+                phone=sib.get("phone", ""),
+            )
+            if result:
+                print(f"      🔗 Sibling HN {sib_hn} ({sib.get('pet_name','?')}) → UID ...{uid[-8:]}")
+                existing_pairs.add((uid, sib_hn))
+                new_count += 1
+    return new_count
+
+
 def backfill_customer_names():
     """หลัง DRX sync — ค้นหา customers ที่ลงทะเบียน HN ไว้แต่ยังไม่มีชื่อ
     แล้ว backfill owner_name / pet_name จาก drx_data.json อัตโนมัติ
+    จากนั้น auto-register HN พี่น้อง (เจ้าของเดียวกัน หลายสัตว์)
     """
     try:
         import appointment_db as adb
         all_customers = adb.get_all_customers()
         pending = [c for c in all_customers
                    if c.get("hn") and not (c.get("owner_name") or c.get("pet_name"))]
-        if not pending:
-            return
-        print(f"   🔄 Backfill: {len(pending)} customers ที่ยังไม่มีชื่อ...")
         filled = 0
-        for cust in pending:
-            hn = cust["hn"]
-            info = adb.verify_hn_with_drx(hn)
-            if not info or not info.get("owner_name"):
-                continue
-            # อัพเดต
-            adb.register_customer(
-                line_user_id=cust["line_user_id"],
-                hn=hn,
-                owner_name=info.get("owner_name", ""),
-                pet_name=info.get("pet_name", ""),
-            )
-            print(f"      ✅ HN {hn} → {info.get('pet_name','')} / {info.get('owner_name','')}")
-            filled += 1
-        if filled:
-            print(f"   ✅ Backfill สำเร็จ {filled} ราย")
+        if pending:
+            print(f"   🔄 Backfill: {len(pending)} customers ที่ยังไม่มีชื่อ...")
+            for cust in pending:
+                hn = cust["hn"]
+                info = adb.verify_hn_with_drx(hn)
+                if not info or not info.get("owner_name"):
+                    continue
+                adb.register_customer(
+                    line_user_id=cust["line_user_id"],
+                    hn=hn,
+                    owner_name=info.get("owner_name", ""),
+                    pet_name=info.get("pet_name", ""),
+                )
+                print(f"      ✅ HN {hn} → {info.get('pet_name','')} / {info.get('owner_name','')}")
+                filled += 1
+            if filled:
+                print(f"   ✅ Backfill สำเร็จ {filled} ราย")
+                all_customers = adb.get_all_customers()   # reload
+
+        # ── Auto-register sibling HNs (เจ้าของมีหลายสัตว์) ──
+        n = _auto_register_sibling_hns(adb, all_customers)
+        if n:
+            print(f"   🔗 Auto-register siblings: {n} HNs ใหม่")
     except Exception as e:
         print(f"   [backfill] error: {e}")
 

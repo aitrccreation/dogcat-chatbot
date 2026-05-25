@@ -219,6 +219,77 @@ def update_customer_note(line_user_id: str, note: str):
     return False
 
 
+def register_sibling_hn(
+    line_user_id: str,
+    hn: str,
+    owner_name: str = "",
+    pet_name:   str = "",
+    pet_type:   str = "",
+    phone:      str = "",
+) -> dict | None:
+    """ลงทะเบียน HN เพิ่มเติมสำหรับ LINE UID เดิม (เจ้าของมีหลายสัตว์)
+    - ไม่ overwrite row เดิม — เพิ่ม row ใหม่เฉพาะคู่ (uid, hn) ที่ยังไม่มี
+    - ตรวจ MAX_USERS_PER_HN เหมือนกัน
+    - Returns dict ถ้าสำเร็จ, None ถ้า quota เต็มหรือมีอยู่แล้ว
+    """
+    hn = (hn or "").strip()
+    if not hn or not line_user_id:
+        return None
+
+    # ── ลอง write ไป Google Sheet ก่อน (ถ้าตั้งไว้) ──
+    try:
+        import gsheet_db
+        if gsheet_db.is_enabled():
+            gsheet_db.register_customer(
+                line_user_id=line_user_id, hn=hn,
+                owner_name=owner_name, pet_name=pet_name,
+                pet_type=pet_type, phone=phone,
+                max_per_hn=MAX_USERS_PER_HN,
+            )
+    except Exception:
+        pass
+
+    with _lock:
+        wb = _load()
+        ws = wb["Customers"]
+        now = _now_iso()
+
+        # ตรวจว่า (uid, hn) คู่นี้มีอยู่แล้วหรือยัง
+        for row in ws.iter_rows(min_row=2):
+            if row[0].value == line_user_id and row[1].value == hn:
+                # มีอยู่แล้ว — อัพข้อมูลถ้าขาด
+                if owner_name and not row[2].value: row[2].value = owner_name
+                if pet_name   and not row[3].value: row[3].value = pet_name
+                if pet_type   and not row[4].value: row[4].value = pet_type
+                if phone      and not row[5].value: row[5].value = phone
+                _save(wb)
+                return _row_to_dict(ws, row[0].row)
+
+        # ตรวจ quota สำหรับ HN นี้
+        existing_count = sum(
+            1 for r in ws.iter_rows(min_row=2, values_only=True)
+            if r[1] == hn and r[0]
+        )
+        if existing_count >= MAX_USERS_PER_HN:
+            log_event("RegisterSibling", hn, line_user_id,
+                      f"HN quota full ({existing_count}/{MAX_USERS_PER_HN})", "FAIL")
+            return None
+
+        # append row ใหม่
+        ws.append([
+            line_user_id, hn, owner_name, pet_name, pet_type, phone,
+            now, now, "auto_sibling",
+        ])
+        _save(wb)
+        log_event("RegisterSibling", hn, line_user_id,
+                  f"sibling HN → {pet_name or hn}", "OK")
+        return {
+            "line_user_id": line_user_id, "hn": hn,
+            "owner_name": owner_name, "pet_name": pet_name,
+            "registered_at": now, "note": "auto_sibling",
+        }
+
+
 # ───── HN validator ─────
 HN_PATTERN = re.compile(r"^\d{6}-\d+$")    # e.g. "690200-1"
 HN_PATTERN_ALT = re.compile(r"^HN-?\d+(-\d+)?$", re.IGNORECASE)
