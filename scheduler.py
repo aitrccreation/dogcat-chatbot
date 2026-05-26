@@ -20,9 +20,8 @@ LOVELY_BOT_TOKEN = os.environ.get("LOVELY_BOT_TOKEN", "").strip()
 LINE_TARGET_ID   = os.environ.get("LINE_TARGET_ID", "").strip()
 TZ_NAME          = os.environ.get("TZ", "Asia/Bangkok")
 
-# Schedule times — 5 ครั้ง/วัน
+# Schedule times — 4 ครั้ง/วัน
 SCHEDULE_TIMES = [
-    (10, 0),
     (13, 0),
     (15, 0),
     (18, 0),
