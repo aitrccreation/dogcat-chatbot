@@ -32,7 +32,14 @@ $settings  = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 10) `
     -AllowStartIfOnBatteries `
-    -DontStopIfGoingOnBatteries
+    -DontStopIfGoingOnBatteries `
+    -WakeToRun
+
+# เปิด Wake Timer ใน Power Plan ปัจจุบัน (จำเป็นสำหรับ WakeToRun)
+powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP BD3B718A-0680-4D9D-8AB2-E1D2B4AC806D 1 | Out-Null
+powercfg /setdcvalueindex SCHEME_CURRENT SUB_SLEEP BD3B718A-0680-4D9D-8AB2-E1D2B4AC806D 1 | Out-Null
+powercfg /setactive SCHEME_CURRENT
+Write-Host "[OK] Wake Timer enabled (AC + Battery)" -ForegroundColor Green
 
 foreach ($entry in $times.GetEnumerator()) {
     $tn      = $entry.Key

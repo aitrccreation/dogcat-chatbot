@@ -193,6 +193,100 @@ def send_flex(line_user_id: str, flex_msg: dict, max_retries: int = 3) -> tuple[
     return False, last_err
 
 
+# ── notify admin ก่อนส่ง (pre-send preview) ──
+def notify_admin_presend(ws, today: date) -> None:
+    """ส่งสรุปรายการนัดที่จะ/ไม่จะส่ง LINE ให้ Wirote ก่อนรันจริง (T+2)"""
+    if not LINE_TOKEN or not ADMIN_LINE_ID:
+        return
+
+    target_date = today + timedelta(days=2)
+    target_iso  = target_date.strftime("%Y-%m-%d")
+    target_thai = thai_date(target_iso)
+    wd          = thai_weekday(target_iso)
+
+    will_send: list[str] = []
+    no_line:   list[str] = []
+    skip_count = 0
+
+    SKIP_SERVICE_KEYWORDS = ("โทร",)
+
+    for row_idx in range(2, ws.max_row + 1):
+        qid           = ws.cell(row=row_idx, column=1).value
+        appt_date_iso = ws.cell(row=row_idx, column=2).value
+        hn            = ws.cell(row=row_idx, column=4).value or ""
+        owner         = ws.cell(row=row_idx, column=5).value or ""
+        pet           = ws.cell(row=row_idx, column=6).value or ""
+        service       = ws.cell(row=row_idx, column=8).value or ""
+        line_uid      = ws.cell(row=row_idx, column=9).value or ""
+        status        = (ws.cell(row=row_idx, column=10).value or "").strip()
+        r1_at         = ws.cell(row=row_idx, column=11).value
+
+        if not qid or str(appt_date_iso) != target_iso:
+            continue
+        if status in ("Confirmed", "Expired", "Cancel"):
+            skip_count += 1
+            continue
+        if any(k in str(service) for k in SKIP_SERVICE_KEYWORDS):
+            skip_count += 1
+            continue
+
+        label = f"น้อง{pet or '-'} ({owner or '-'}) HN {hn}"
+
+        if not line_uid or status == "NoLine":
+            no_line.append(label)
+        elif not r1_at:
+            # T+2 และยังไม่เคยส่ง → จะส่งวันนี้
+            will_send.append(label)
+        else:
+            # ส่งไปแล้ว (r1_at มีค่า)
+            skip_count += 1
+
+    # ไม่ส่ง presend ถ้าไม่มีรายการเลยในวันนั้น
+    if not will_send and not no_line:
+        return
+
+    lines = [
+        f"📋 สรุปนัดวันที่ {target_thai} ({wd})",
+        "─── ก่อนส่ง LINE 18:00 ───",
+        "",
+    ]
+    if will_send:
+        lines.append(f"✅ จะส่ง LINE {len(will_send)} ราย:")
+        for item in will_send[:20]:
+            lines.append(f"  • {item}")
+        if len(will_send) > 20:
+            lines.append(f"  ... และอีก {len(will_send)-20} ราย")
+    else:
+        lines.append("✅ จะส่ง LINE: ไม่มีรายการ")
+
+    lines.append("")
+    if no_line:
+        lines.append(f"📞 ไม่มี LINE {len(no_line)} ราย (โทรเอง):")
+        for item in no_line[:10]:
+            lines.append(f"  • {item}")
+        if len(no_line) > 10:
+            lines.append(f"  ... และอีก {len(no_line)-10} ราย")
+    else:
+        lines.append("📞 ไม่มี LINE: ไม่มีรายการ")
+
+    if skip_count:
+        lines.append(f"\n⏭ ข้าม {skip_count} ราย (ยืนยันแล้ว/หมดอายุ/โทร)")
+
+    text = "\n".join(lines)
+    try:
+        requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {LINE_TOKEN}",
+                     "Content-Type": "application/json"},
+            json={"to": ADMIN_LINE_ID,
+                  "messages": [{"type": "text", "text": text[:4900]}]},
+            timeout=15,
+        )
+        print(f"  📋 Pre-send notification → Wirote ({len(will_send)} จะส่ง, {len(no_line)} NoLine)")
+    except Exception as e:
+        print(f"  [presend-notify] error: {e}")
+
+
 # ── notify admin (สำหรับ NoLine cases) ──
 def notify_admin_nolist(no_line_rows: list[dict]):
     if not no_line_rows or not LINE_TOKEN or not ADMIN_LINE_ID:
@@ -258,6 +352,10 @@ def main():
     wb = load_workbook(XLSX)
     ws = wb["Send_Queue"]
     today = date.today()
+
+    # ── ส่งสรุปให้ Wirote ก่อนส่งจริง ──
+    if not dry_run:
+        notify_admin_presend(ws, today)
 
     stats = {"sent_r1": 0, "sent_r2": 0, "sent_r3": 0, "skip": 0, "skip_service": 0, "noline": 0, "error": 0}
     noline_rows: list[dict] = []

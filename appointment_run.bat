@@ -2,14 +2,14 @@
 :: Appointment workflow
 ::   queue  → build Send_Queue (13:00)
 ::   send   → send LINE reminders (18:00)
-::   drx    → sync DRX data (20:15)
+::   drx    → sync DRX data (12:30 / 20:15)
 ::   both   → full sync (manual)
 chcp 65001 > nul
 set PYTHONIOENCODING=utf-8
-cd /d "D:\AI Dashboard"
+cd /d "E:\AI Dashboard"
 
-set PYEXE=C:\Users\aitrc\AppData\Local\Python\bin\python.exe
-set LOGFILE=D:\AI Dashboard\appointment_log.txt
+set PYEXE=C:\Users\usEr\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe
+set LOGFILE=E:\AI Dashboard\appointment_log.txt
 
 set MODE=%1
 if "%MODE%"=="" set MODE=both

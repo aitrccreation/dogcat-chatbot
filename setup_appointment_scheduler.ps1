@@ -1,7 +1,8 @@
 # Setup Task Scheduler for appointment workflow
+#   12:30 — sync DRX (รอบเช้า) → ให้ queue build 13:00 ใช้ข้อมูลสด
 #   13:00 — build Send_Queue (จาก DRX data ที่มี)
 #   18:00 — send LINE reminders (ส่งล่วงหน้า 2 วัน ครั้งเดียว)
-#   20:15 — sync DRX (ดึงข้อมูลใหม่จาก DRX)
+#   20:15 — sync DRX (รอบเย็น) → ให้พรุ่งนี้เช้ามีข้อมูลสำรอง
 # Run as Administrator!
 
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -10,10 +11,11 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     exit 1
 }
 
-$BAT  = "D:\AI Dashboard\appointment_run.bat"
-$USER = "TARN\aitrc"
+$BAT  = "E:\AI Dashboard\appointment_run.bat"
+$USER = "IHC-BTKRX1720\usEr"
 
 $tasks = @{
+    "DogCatLovely_APPT_DRX_1230"   = @{ time = "12:30"; arg = "drx"   }
     "DogCatLovely_APPT_Queue_1300" = @{ time = "13:00"; arg = "queue" }
     "DogCatLovely_APPT_Send_1800"  = @{ time = "18:00"; arg = "send"  }
     "DogCatLovely_APPT_DRX_2015"   = @{ time = "20:15"; arg = "drx"   }
@@ -40,7 +42,7 @@ foreach ($entry in $tasks.GetEnumerator()) {
 
     $action  = New-ScheduledTaskAction -Execute "cmd.exe" `
                 -Argument "/c `"$BAT`" $arg" `
-                -WorkingDirectory "D:\AI Dashboard"
+                -WorkingDirectory "E:\AI Dashboard"
     $trigger = New-ScheduledTaskTrigger -Daily -At $tm
 
     Unregister-ScheduledTask -TaskName $tn -Confirm:$false -ErrorAction SilentlyContinue
