@@ -193,9 +193,13 @@ def send_flex(line_user_id: str, flex_msg: dict, max_retries: int = 3) -> tuple[
     return False, last_err
 
 
-# ── notify admin ก่อนส่ง (pre-send preview) ──
+# ── notify admin — ข้อความเดียวรวม pre-send + NoLine ──
 def notify_admin_presend(ws, today: date) -> None:
-    """ส่งสรุปรายการนัดที่จะ/ไม่จะส่ง LINE ให้ Wirote ก่อนรันจริง (T+2)"""
+    """สแกน Send_Queue และส่งสรุปครบในข้อความเดียวให้ Wirote:
+      - T+2: จะส่ง LINE / ไม่มี LINE
+      - วันนี้/พรุ่งนี้/3 วัน: ต้องโทรหาเอง
+    (รวม notify_admin_nolist ไว้ในที่เดียว — ไม่ส่งซ้ำ)
+    """
     if not LINE_TOKEN or not ADMIN_LINE_ID:
         return
 
@@ -204,11 +208,12 @@ def notify_admin_presend(ws, today: date) -> None:
     target_thai = thai_date(target_iso)
     wd          = thai_weekday(target_iso)
 
-    will_send: list[str] = []
-    no_line:   list[str] = []
-    skip_count = 0
+    will_send:     list[str] = []   # T+2 + มี LINE + ยังไม่ส่ง
+    no_line_t2:    list[str] = []   # T+2 + ไม่มี LINE
+    no_line_call:  list[dict] = []  # วัน (3,1,0) + ไม่มี LINE → ต้องโทร
 
     SKIP_SERVICE_KEYWORDS = ("โทร",)
+    CALL_DAYS = {3, 1, 0}
 
     for row_idx in range(2, ws.max_row + 1):
         qid           = ws.cell(row=row_idx, column=1).value
@@ -221,56 +226,70 @@ def notify_admin_presend(ws, today: date) -> None:
         status        = (ws.cell(row=row_idx, column=10).value or "").strip()
         r1_at         = ws.cell(row=row_idx, column=11).value
 
-        if not qid or str(appt_date_iso) != target_iso:
+        if not qid or not appt_date_iso:
             continue
         if status in ("Confirmed", "Expired", "Cancel"):
-            skip_count += 1
             continue
         if any(k in str(service) for k in SKIP_SERVICE_KEYWORDS):
-            skip_count += 1
             continue
 
+        try:
+            appt_d = datetime.strptime(str(appt_date_iso), "%Y-%m-%d").date()
+        except Exception:
+            continue
+        days_until = (appt_d - today).days
+
+        is_no_line = not line_uid or status == "NoLine"
         label = f"น้อง{pet or '-'} ({owner or '-'}) HN {hn}"
 
-        if not line_uid or status == "NoLine":
-            no_line.append(label)
-        elif not r1_at:
-            # T+2 และยังไม่เคยส่ง → จะส่งวันนี้
-            will_send.append(label)
-        else:
-            # ส่งไปแล้ว (r1_at มีค่า)
-            skip_count += 1
+        if str(appt_date_iso) == target_iso:          # T+2
+            if is_no_line:
+                no_line_t2.append(label)
+            elif not r1_at:
+                will_send.append(label)
+        elif days_until in CALL_DAYS and is_no_line:  # วันใกล้ ต้องโทร
+            no_line_call.append({
+                "label":     label,
+                "appt_date": str(appt_date_iso),
+                "days_until": days_until,
+            })
 
-    # ไม่ส่ง presend ถ้าไม่มีรายการเลยในวันนั้น
-    if not will_send and not no_line:
+    # ไม่ส่งถ้าไม่มีรายการ
+    if not will_send and not no_line_t2 and not no_line_call:
         return
 
     lines = [
-        f"📋 สรุปนัดวันที่ {target_thai} ({wd})",
-        "─── ก่อนส่ง LINE 18:00 ───",
-        "",
+        f"📋 สรุปนัดหมาย {target_thai} ({wd})",
+        "━━━━━━━━━━━━━━━━━━━━━",
     ]
+
+    # ส่วนที่ 1: จะส่ง LINE วันนี้ (T+2)
     if will_send:
-        lines.append(f"✅ จะส่ง LINE {len(will_send)} ราย:")
+        lines.append(f"✅ ส่ง LINE {len(will_send)} ราย:")
         for item in will_send[:20]:
             lines.append(f"  • {item}")
         if len(will_send) > 20:
             lines.append(f"  ... และอีก {len(will_send)-20} ราย")
     else:
-        lines.append("✅ จะส่ง LINE: ไม่มีรายการ")
+        lines.append("✅ ส่ง LINE: ไม่มีรายการ")
 
-    lines.append("")
-    if no_line:
-        lines.append(f"📞 ไม่มี LINE {len(no_line)} ราย (โทรเอง):")
-        for item in no_line[:10]:
+    # ส่วนที่ 2: T+2 ไม่มี LINE
+    if no_line_t2:
+        lines.append(f"\n📵 ไม่มี LINE (นัดมะรืน) {len(no_line_t2)} ราย:")
+        for item in no_line_t2[:10]:
             lines.append(f"  • {item}")
-        if len(no_line) > 10:
-            lines.append(f"  ... และอีก {len(no_line)-10} ราย")
-    else:
-        lines.append("📞 ไม่มี LINE: ไม่มีรายการ")
+        if len(no_line_t2) > 10:
+            lines.append(f"  ... และอีก {len(no_line_t2)-10} ราย")
 
-    if skip_count:
-        lines.append(f"\n⏭ ข้าม {skip_count} ราย (ยืนยันแล้ว/หมดอายุ/โทร)")
+    # ส่วนที่ 3: ต้องโทรวันนี้ (นัดใน 0-3 วัน ไม่มี LINE)
+    if no_line_call:
+        day_label = {0: "วันนี้", 1: "พรุ่งนี้", 3: "อีก 3 วัน"}
+        lines.append(f"\n📞 ต้องโทรนัด {len(no_line_call)} ราย:")
+        for r in no_line_call[:15]:
+            dl = day_label.get(r["days_until"], f"อีก {r['days_until']} วัน")
+            lines.append(f"  • [{dl}] {r['label']}")
+        if len(no_line_call) > 15:
+            lines.append(f"  ... และอีก {len(no_line_call)-15} ราย")
 
     text = "\n".join(lines)
     try:
@@ -282,33 +301,14 @@ def notify_admin_presend(ws, today: date) -> None:
                   "messages": [{"type": "text", "text": text[:4900]}]},
             timeout=15,
         )
-        print(f"  📋 Pre-send notification → Wirote ({len(will_send)} จะส่ง, {len(no_line)} NoLine)")
+        print(f"  📋 Summary → Wirote: ส่ง {len(will_send)} | NoLine T+2 {len(no_line_t2)} | โทร {len(no_line_call)}")
     except Exception as e:
         print(f"  [presend-notify] error: {e}")
 
 
-# ── notify admin (สำหรับ NoLine cases) ──
+# ── notify_admin_nolist — ถูกรวมใน notify_admin_presend แล้ว (kept for compat) ──
 def notify_admin_nolist(no_line_rows: list[dict]):
-    if not no_line_rows or not LINE_TOKEN or not ADMIN_LINE_ID:
-        return
-    lines = ["📞 ลูกค้าที่ต้องโทรนัดเอง (ไม่ได้ลงทะเบียน LINE)", "━━━━━━━━━━━━━━━━━"]
-    for r in no_line_rows[:30]:
-        lines.append(f"• {thai_date(r['appt_date'])} | น้อง{r['pet_name']} "
-                     f"({r['owner_name']}) | HN {r['hn']}")
-    if len(no_line_rows) > 30:
-        lines.append(f"... และอีก {len(no_line_rows)-30} ราย")
-    lines.append("")
-    lines.append("🔗 ดูเต็มใน Excel: D:\\AI Dashboard\\appointments.xlsx")
-    text = "\n".join(lines)
-
-    requests.post(
-        "https://api.line.me/v2/bot/message/push",
-        headers={"Authorization": f"Bearer {LINE_TOKEN}",
-                 "Content-Type": "application/json"},
-        json={"to": ADMIN_LINE_ID,
-              "messages": [{"type": "text", "text": text[:4900]}]},
-        timeout=15,
-    )
+    pass  # merged into notify_admin_presend — no longer sends separate message
 
 
 # ── MAIN ──
@@ -466,14 +466,10 @@ def main():
         except Exception as e:
             print(f"   [gsheet] ⚠️ post-send mirror failed: {e}")
 
-    # แจ้ง admin เรื่อง NoLine
-    if noline_rows and not dry_run:
-        notify_admin_nolist(noline_rows)
-
     print()
     print(f"📊 Summary: {stats}")
     if noline_rows:
-        print(f"   {len(noline_rows)} รายที่ไม่มี LINE — แจ้ง admin แล้ว")
+        print(f"   {len(noline_rows)} รายที่ไม่มี LINE (รวมในสรุปก่อนส่งแล้ว)")
     return stats
 
 
