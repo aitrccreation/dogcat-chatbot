@@ -108,6 +108,12 @@ def run_daily_summary():
         msg  = line_sender.build_message(data)
         log.info(f"[Scheduler] Built message ({len(msg)} chars), sending to LINE...")
         line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, msg)
+
+        # 3. ส่ง stock message แยก — เฉพาะรอบ 20:xx (20:20)
+        if now.hour == 20:
+            stock_msg = line_sender.build_stock_message(data)
+            log.info(f"[Scheduler] Stock message ({len(stock_msg)} chars), sending...")
+            line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, stock_msg)
         log.info("[Scheduler] Daily summary sent successfully")
     except Exception as e:
         log.exception(f"[Scheduler] Error in daily summary: {e}")

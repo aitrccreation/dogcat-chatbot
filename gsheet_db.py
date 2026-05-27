@@ -19,6 +19,19 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
+# Bangkok timezone — บังคับ timestamp ทั้งหมดเป็น Asia/Bangkok
+# เพราะ Railway server รัน UTC แต่ user อยู่ไทย (UTC+7)
+try:
+    from zoneinfo import ZoneInfo
+    BKK_TZ = ZoneInfo("Asia/Bangkok")
+except ImportError:
+    try:
+        import pytz
+        BKK_TZ = pytz.timezone("Asia/Bangkok")
+    except ImportError:
+        BKK_TZ = None
+        log.warning("[gsheet] ไม่มี zoneinfo/pytz — จะใช้ system local time")
+
 HEADERS = [
     "line_user_id", "hn", "owner_name", "pet_name", "pet_type",
     "phone", "registered_at", "last_active", "note",
@@ -55,6 +68,9 @@ _disabled = False
 
 
 def _now_iso() -> str:
+    """คืนเวลาปัจจุบันใน Asia/Bangkok (UTC+7) เสมอ"""
+    if BKK_TZ is not None:
+        return datetime.now(BKK_TZ).strftime("%Y-%m-%d %H:%M:%S")
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 

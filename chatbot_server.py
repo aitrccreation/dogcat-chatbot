@@ -46,6 +46,23 @@ from pathlib import Path
 from flask import Flask, request, jsonify, abort, send_from_directory
 import requests as req
 
+# ── Bangkok timezone helper — Railway รัน UTC แต่ user อยู่ไทย (UTC+7) ──
+try:
+    from zoneinfo import ZoneInfo
+    _BKK_TZ = ZoneInfo("Asia/Bangkok")
+except ImportError:
+    try:
+        import pytz
+        _BKK_TZ = pytz.timezone("Asia/Bangkok")
+    except ImportError:
+        _BKK_TZ = None
+
+def bkk_now() -> datetime:
+    """คืน datetime ใน Asia/Bangkok เสมอ (UTC+7) — ใช้แทน datetime.now() ทุกที่ที่ส่งให้ user"""
+    if _BKK_TZ is not None:
+        return datetime.now(_BKK_TZ).replace(tzinfo=None)
+    return datetime.now()
+
 # โหลด .env ถ้ามี (สำหรับ local dev)
 try:
     from dotenv import load_dotenv
@@ -238,14 +255,14 @@ THAI_MONTHS = ["","ม.ค.","ก.พ.","มี.ค.","เม.ย.","พ.ค.","
                "ก.ค.","ส.ค.","ก.ย.","ต.ค.","พ.ย.","ธ.ค."]
 
 def thai_date_short() -> str:
-    n = datetime.now()
+    n = bkk_now()
     return f"{n.day} {THAI_MONTHS[n.month]} {n.year+543}"
 
 
 def get_today_appointments() -> list:
     data = get_data()
     appts = data.get("appointments", [])
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = bkk_now().strftime("%Y-%m-%d")
     return [a for a in appts if a.get("date", "") == today]
 
 
@@ -1840,13 +1857,16 @@ def run_summary_now():
                             "error": str(e), "trace": traceback.format_exc()[:1500]})
 
         # สร้างข้อความ
+        from datetime import datetime as _dt
+        now_hour = _dt.now().hour
+        with_stock = request.args.get("stock") == "1" or now_hour == 20
         try:
             msg = line_sender.build_message(data)
         except Exception as e:
             return jsonify({"step": "build_message", "drx_status": drx_status,
                             "error": str(e), "trace": traceback.format_exc()[:1500]})
 
-        # ส่ง LINE
+        # ส่ง LINE (main message)
         try:
             ok = line_sender.send_line_push(token, target, msg)
         except Exception as e:
@@ -1854,8 +1874,18 @@ def run_summary_now():
                             "msg_len": len(msg),
                             "error": str(e), "trace": traceback.format_exc()[:1500]})
 
+        # ส่ง stock message แยก — รอบ 20:xx หรือ ?stock=1
+        stock_sent = False
+        if with_stock:
+            try:
+                stock_msg = line_sender.build_stock_message(data)
+                line_sender.send_line_push(token, target, stock_msg)
+                stock_sent = True
+            except Exception as e:
+                log.warning(f"[run_summary_now] stock send failed: {e}")
+
         return jsonify({"status": "ok", "drx_status": drx_status,
-                        "msg_len": len(msg), "sent": ok})
+                        "msg_len": len(msg), "sent": ok, "stock_sent": stock_sent})
     except Exception as e:
         return jsonify({"status": "fatal", "error": str(e),
                         "trace": traceback.format_exc()[:2000]})

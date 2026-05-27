@@ -14,6 +14,17 @@ from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
 
+# Bangkok TZ — บังคับ timestamp เป็น Asia/Bangkok เสมอ (Railway = UTC)
+try:
+    from zoneinfo import ZoneInfo
+    _BKK_TZ = ZoneInfo("Asia/Bangkok")
+except ImportError:
+    try:
+        import pytz
+        _BKK_TZ = pytz.timezone("Asia/Bangkok")
+    except ImportError:
+        _BKK_TZ = None
+
 XLSX_PATH = Path(__file__).parent / "appointments.xlsx"
 _lock = threading.RLock()
 
@@ -37,6 +48,9 @@ def _save(wb):
 
 
 def _now_iso() -> str:
+    """คืนเวลาปัจจุบันใน Asia/Bangkok (UTC+7) เสมอ"""
+    if _BKK_TZ is not None:
+        return datetime.now(_BKK_TZ).strftime("%Y-%m-%d %H:%M:%S")
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 

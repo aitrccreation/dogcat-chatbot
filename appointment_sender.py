@@ -31,11 +31,14 @@ from openpyxl import load_workbook
 
 XLSX = Path(__file__).parent / "appointments.xlsx"
 
-# LINE OA token สำหรับส่ง reminder — ใช้ LINE_OA_TOKEN ก่อน, fallback LINE_TOKEN
+# LINE OA token สำหรับส่ง reminder ให้ลูกค้า — ใช้ LINE_OA_TOKEN ก่อน, fallback LINE_TOKEN
 LINE_TOKEN = os.environ.get(
     "LINE_OA_TOKEN",
     os.environ.get("LINE_TOKEN", "")
 ).strip()
+
+# Admin notification → Wirote — ใช้ LOVELY_BOT_TOKEN (Wirote เป็นเพื่อน Lovely Bot, ไม่ใช่ LINE OA)
+ADMIN_TOKEN = os.environ.get("LOVELY_BOT_TOKEN", "").strip() or LINE_TOKEN
 
 ADMIN_LINE_ID = os.environ.get("LINE_TARGET_ID", "Ude09abe7b1f73ee901c047ccfe693dd8").strip()
 
@@ -293,15 +296,18 @@ def notify_admin_presend(ws, today: date) -> None:
 
     text = "\n".join(lines)
     try:
-        requests.post(
+        r = requests.post(
             "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization": f"Bearer {LINE_TOKEN}",
+            headers={"Authorization": f"Bearer {ADMIN_TOKEN}",
                      "Content-Type": "application/json"},
             json={"to": ADMIN_LINE_ID,
                   "messages": [{"type": "text", "text": text[:4900]}]},
             timeout=15,
         )
-        print(f"  📋 Summary → Wirote: ส่ง {len(will_send)} | NoLine T+2 {len(no_line_t2)} | โทร {len(no_line_call)}")
+        if r.status_code == 200:
+            print(f"  📋 Summary → Wirote: ส่ง {len(will_send)} | NoLine T+2 {len(no_line_t2)} | โทร {len(no_line_call)}")
+        else:
+            print(f"  [presend-notify] HTTP {r.status_code}: {r.text[:200]}")
     except Exception as e:
         print(f"  [presend-notify] error: {e}")
 
