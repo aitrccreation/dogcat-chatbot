@@ -1782,12 +1782,23 @@ def test_reset():
 
 # ──────────────────────────────────────────────
 #  START SCHEDULER (Daily Summary)
-#  ⚠️  APScheduler ถูก DISABLE แล้ว — ใช้ Windows Task Scheduler แทน
-#  Tasks: DogCatLovely_Summary_1300/1500/1800/2020 → summary_run.bat → scheduler.py
-#  ทำแบบนี้เพื่อให้ reliable กว่า (ไม่พึ่ง process ค้างอยู่)
+#  รันเฉพาะบนเครื่อง Local PC เท่านั้น
+#  Railway ไม่รัน scheduler (ป้องกันส่ง LINE ซ้ำ 2 ครั้ง)
 # ──────────────────────────────────────────────
 _scheduler_instance = None
-log.info("APScheduler DISABLED — daily summary handled by Windows Task Scheduler")
+_is_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_PROJECT_ID"))
+if _is_railway:
+    log.info("Railway environment detected — scheduler DISABLED (summary sent from local PC only)")
+else:
+    try:
+        import scheduler as _scheduler_mod
+        _scheduler_instance = _scheduler_mod.start_scheduler()
+        if _scheduler_instance:
+            log.info("Daily summary scheduler started (Local PC mode)")
+        else:
+            log.warning("Daily summary scheduler not started (missing deps?)")
+    except Exception as _e:
+        log.warning(f"Could not start scheduler: {_e}")
 
 
 @app.route("/run_summary_now", methods=["GET"])
