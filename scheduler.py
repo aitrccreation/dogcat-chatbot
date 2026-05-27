@@ -15,7 +15,16 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-# โหลด env vars
+# โหลด .env ก่อนอ่านค่า (สำคัญเมื่อรัน scheduler.py โดยตรงจาก Task Scheduler)
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=False)  # override=False: ไม่ทับถ้ามีค่าอยู่แล้ว
+except ImportError:
+    pass
+
+# โหลด env vars (อ่านหลัง dotenv)
 LOVELY_BOT_TOKEN = os.environ.get("LOVELY_BOT_TOKEN", "").strip()
 LINE_TARGET_ID   = os.environ.get("LINE_TARGET_ID", "").strip()
 TZ_NAME          = os.environ.get("TZ", "Asia/Bangkok")
