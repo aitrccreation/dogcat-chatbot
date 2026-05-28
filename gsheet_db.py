@@ -233,10 +233,12 @@ def register_customer(
         records = sheet.get_all_records()
         now = _now_iso()
 
-        # หา existing row ของ line_user_id นี้
+        # หา existing row โดยใช้ (line_user_id + hn) เป็น key
+        # — ไม่ใช่ line_user_id อย่างเดียว! เพราะ 1 LINE ID อาจมีหลาย HN (sibling pets)
         for idx, r in enumerate(records, start=2):   # start=2 because row 1 = headers
-            if str(r.get("line_user_id", "")) == line_user_id:
-                # update
+            if (str(r.get("line_user_id", "")) == line_user_id and
+                str(r.get("hn", "")).strip() == hn.strip()):
+                # ตรงคู่นี้ — update เฉพาะฟิลด์ที่มีค่าใหม่ (ไม่ทับของเดิม)
                 sheet.update(f"A{idx}:I{idx}", [[
                     line_user_id,
                     hn,
@@ -255,13 +257,13 @@ def register_customer(
                     "last_active": now,
                 }
 
-        # คนใหม่ — ตรวจ quota
+        # คู่ (uid, hn) ใหม่ — ตรวจ quota ก่อน append
         existing_count = sum(1 for r in records if str(r.get("hn", "")).strip() == hn.strip())
         if existing_count >= max_per_hn:
             log.warning(f"[gsheet] HN {hn} quota full ({existing_count}/{max_per_hn})")
             return None
 
-        # append new
+        # append new — รองรับทั้ง primary และ sibling pets
         sheet.append_row([
             line_user_id, hn, owner_name, pet_name, pet_type, phone,
             now, now, note,
