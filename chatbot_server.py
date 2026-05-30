@@ -953,7 +953,15 @@ def notify_admin_unanswered(user_id: str, user_text: str, draft: str = ""):
     """
     ส่ง push LINE ไปหา admin (Wirote) เมื่อบอทตอบไม่ได้
     พร้อมแนบ draft คำตอบที่ AI แนะนำ
+
+    NOTE: ตั้งแต่ 2026-05-30 — ปิดไว้เป็น default เพื่อไม่รบกวน Wirote
+    ตั้ง env NOTIFY_ADMIN_UNANSWERED=true ถ้าต้องการเปิดใช้
     """
+    # Wirote ขอให้หยุดส่ง notify เมื่อบอทตอบไม่ได้ — บอทเงียบเฉยๆ ไม่แจ้งใคร
+    if os.environ.get("NOTIFY_ADMIN_UNANSWERED", "false").lower() != "true":
+        log.info(f"[notify] admin notification disabled — skip (user={user_id[-8:] if len(user_id)>8 else user_id})")
+        return
+
     if not LOVELY_BOT_TOKEN or not ADMIN_LINE_ID:
         log.warning("[notify] LOVELY_BOT_TOKEN หรือ ADMIN_LINE_ID ยังไม่ได้ตั้งค่า")
         return
