@@ -23,6 +23,14 @@ from pathlib import Path
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
+# Load .env so RAILWAY_BOT_URL / GOOGLE_SHEET_ID / INTERNAL_API_KEY are available
+# when launched via Task Scheduler (where env vars are otherwise blank).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env", override=False)
+except Exception:
+    pass
+
 from openpyxl import load_workbook
 
 XLSX = Path(__file__).parent / "appointments.xlsx"
@@ -148,18 +156,21 @@ def write_drx_sheet(appts: list[dict]):
 
 def collect_send_queue():
     """รวม DRX + Manual → Send_Queue ที่ตรงเงื่อนไข reminder window
-    เงื่อนไข: appt_date == today + 2 days (ส่งล่วงหน้า 2 วัน ครั้งเดียว)
-    Skip: รายการที่อยู่ใน Send_Queue แล้วและ status=Confirmed
-    Skip: บริการที่เป็น "อื่นๆ" หรือ "โทรสอบถาม/โทรถาม" (ไม่ต้องส่งเตือน)
+    เงื่อนไข: appt_date เป็น T+1 หรือ T+2
+      - T+2 = case ปกติ (build 13:00, ส่ง 18:00 ของวันเดียวกัน → ลูกค้าได้รับล่วงหน้า 2 วัน)
+      - T+1 = catch-up นัดที่ DRX เพิ่งเพิ่มหลัง build T+2 ของเมื่อวาน
+              (build 13:00 → ส่ง 18:00 → ลูกค้าได้รับล่วงหน้า 1 วัน)
+    Skip: รายการที่อยู่ใน Send_Queue แล้วและ status=Confirmed (กันส่งซ้ำ)
+    Skip: บริการที่เป็น "โทรสอบถาม/โทรถาม" (ไม่ใช่บริการจริง ไม่ต้องเตือน)
     """
     wb = load_workbook(XLSX)
     today = datetime.now().date()
-    target_date = today + timedelta(days=2)
+    target_dates = {today + timedelta(days=1), today + timedelta(days=2)}
 
     def in_window(d: str) -> bool:
         try:
             dt = datetime.strptime(d, "%Y-%m-%d").date()
-            return dt == target_date  # เฉพาะ T+2
+            return dt in target_dates  # T+1 หรือ T+2
         except Exception:
             return False
 
@@ -723,7 +734,7 @@ def run_queue_build():
     """Build Send_Queue จาก DRX_Appointments + mirror ไป Google Sheet
     บน Railway: DRX_Appointments มาจาก Google Sheet (PC sync ก่อน 20:15)
     """
-    print("─── QUEUE BUILD (T+2 only) ───")
+    print("─── QUEUE BUILD (T+1 catch-up + T+2) ───")
     # 0a. sync customers จาก Google Sheet
     gs_synced = sync_customers_from_gsheet()
     if gs_synced == 0:
@@ -732,7 +743,7 @@ def run_queue_build():
     sync_drx_from_gsheet()
     # 1. build queue
     added, total = collect_send_queue()
-    print(f"   Send_Queue: +{added} new (จาก {total} candidates ใน T+2)")
+    print(f"   Send_Queue: +{added} new (จาก {total} candidates ใน T+1/T+2)")
     _mirror_queue_to_gsheet()
     try:
         import appointment_db as adb
