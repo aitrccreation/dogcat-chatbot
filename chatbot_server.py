@@ -1555,7 +1555,19 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
                     "images": [absolute_image_url(p) for p in qa_obj.get("images", [])],
                 }
 
-        # ── 3c. AI handoff — แจ้ง admin เงียบๆ ไม่ตอบลูกค้า ──
+        # ── 3b.5 Partial mode — AI สังเคราะห์คำตอบจาก KB ที่ใกล้เคียง ──
+        if ai_mode == "partial" and ai_answer:
+            reset_session(user_id)
+            log.info(f"[{user_id}] AI partial mode qa_id={qa_id} conf={ai_conf}")
+            # แนบรูปจาก qa ที่ใกล้ที่สุด (ถ้ามี)
+            qa_obj = qa.find_by_id(qa_id) if qa_id else None
+            images = [absolute_image_url(p) for p in qa_obj.get("images", [])] if qa_obj else []
+            return {
+                "text":   ai_answer + FOOTER,
+                "images": images,
+            }
+
+        # ── 3c. AI handoff — เงียบ ไม่ตอบลูกค้า ──
         if ai_mode == "handoff":
             reset_session(user_id)
             return handoff_silently(sess, user_id, user_text, ai_draft)
