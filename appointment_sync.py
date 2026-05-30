@@ -47,10 +47,13 @@ THAI_MONTH = {"ม.ค.": 1, "ก.พ.": 2, "มี.ค.": 3, "เม.ย.": 4, 
 
 
 def parse_thai_date(s: str) -> str | None:
-    """'17 พ.ค. 2569' → '2026-05-17' (ISO)"""
+    """'17 พ.ค. 2569' → '2026-05-17' (ISO)
+    รองรับ Thai vowel marks เช่น 'มิ.ย.', 'มี.ค.' (ใช้ Unicode Thai range เต็ม)
+    """
     if not s:
         return None
-    m = re.match(r"(\d+)\s+([ก-ฮ.]+)\s+(\d{4})", s.strip())
+    # [฀-๿.] = Thai consonants + vowels + marks + dot
+    m = re.match(r"(\d+)\s+([฀-๿.]+)\s+(\d{4})", s.strip())
     if not m:
         return None
     day, month_th, year = m.groups()
