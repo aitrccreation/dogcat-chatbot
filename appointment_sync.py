@@ -722,6 +722,10 @@ def run_drx_sync(fetch_fresh: bool = True):
     print(f"   loaded {len(drx)} appointments จาก DRX")
     write_drx_sheet(drx)
     _mirror_drx_to_gsheet()
+    # pull customers จาก Google Sheet ก่อน backfill —
+    # registration ใหม่ (ผ่าน chatbot) ลง Google Sheet เท่านั้น ยังไม่อยู่ใน Excel
+    # ถ้าไม่ pull ก่อน backfill จะมองไม่เห็น row ใหม่ (อ่านจาก Excel) → ลูกค้าใหม่ไม่ถูก backfill
+    sync_customers_from_gsheet()
     # backfill ชื่อลูกค้าที่ลงทะเบียนแต่ยังไม่มีข้อมูลใน DRX
     backfill_customer_names()
     # ตรวจ LINE UID ของลูกค้าทุกราย (block/ลบบัญชี → mark LINE_BLOCKED)
