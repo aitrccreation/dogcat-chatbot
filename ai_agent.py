@@ -26,7 +26,13 @@ except ImportError:
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "").strip()
 AI_MODEL          = os.environ.get("AI_MODEL", "claude-sonnet-4-5").strip()
-AI_ENABLED        = os.environ.get("AI_ENABLED", "true").lower() != "false"
+
+# ⛔ Claude AI ปิดถาวรตามคำสั่ง Wirote (2026-06-07)
+#    บอทตอบ "เฉพาะ" จาก Excel knowledge base (exact + keyword match) เท่านั้น
+#    ถ้าคำถามไม่ตรงกับที่ตั้งไว้ใน Excel → เงียบ ไม่ตอบ ไม่เรียก Claude
+#    hard-code False (ไม่อ่าน env) เพื่อให้ปิดแน่นอนทั้ง local + Railway
+#    วิธีเปิดกลับ: เปลี่ยนเป็น os.environ.get("AI_ENABLED","false").lower()=="true"
+AI_ENABLED        = False
 
 # Singleton client
 _client = None
