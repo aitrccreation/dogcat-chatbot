@@ -1524,6 +1524,15 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
             return handoff_silently(sess, user_id, user_text)
         # อื่นๆ → fall through ไปค้นใหม่ (AI/keyword)
 
+    # ── 2.7 Exact match → ตอบเลย ไม่ต้องเรียก AI (ประหยัด Anthropic API) ──
+    # ปุ่ม / quick reply / copy-paste ส่งข้อความตรงกับคำถามใน KB เป๊ะ → ตอบจาก KB ตรงๆ
+    # ปลอดภัย 100% (ตรงตัวอักษร ไม่เสี่ยงตอบผิด) และไม่เปลือง Claude call
+    exact = qa.find_exact(user_text)
+    if exact:
+        reset_session(user_id)
+        log.info(f"[{user_id}] exact match qa_id={exact['id']} — skip AI (ประหยัด API)")
+        return build_answer_reply(exact)
+
     # ── 3. AI Agent (ลำดับแรก — ตอบทั้ง KB mode และ Free mode) ──
     try:
         import ai_agent

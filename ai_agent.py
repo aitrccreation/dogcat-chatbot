@@ -127,18 +127,32 @@ def match_qa(user_msg: str, qa_list: list) -> dict | None:
         return None
 
     kb = build_kb_text(qa_list)
-    user_prompt = (
-        f"Knowledge base (ราคา/บริการของ รพส.หมาแมวเลิฟลี่):\n{kb}\n\n"
-        f"คำถามจากลูกค้า: {user_msg!r}"
-    )
 
     try:
+        # Prompt caching: SYSTEM_PROMPT + KB เป็น static (~4,700 tokens) — cache ไว้
+        # cache_control บน block สุดท้าย → cache ทุกอย่างก่อนหน้า (prompt+KB)
+        # call ถัดไปภายใน 5 นาที อ่านจาก cache (ราคา ~10% ของ input ปกติ)
+        # มีแต่คำถามลูกค้าที่เปลี่ยน → อยู่ใน user message (ไม่ cache)
         response = client.messages.create(
             model=AI_MODEL,
             max_tokens=1200,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
+            system=[
+                {"type": "text", "text": SYSTEM_PROMPT},
+                {
+                    "type": "text",
+                    "text": f"Knowledge base (ราคา/บริการของ รพส.หมาแมวเลิฟลี่):\n{kb}",
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ],
+            messages=[{"role": "user", "content": f"คำถามจากลูกค้า: {user_msg!r}"}],
         )
+        # log cache usage เพื่อยืนยันว่า caching ทำงาน
+        try:
+            u = response.usage
+            log.info(f"[AI] tokens in={u.input_tokens} cache_write={getattr(u,'cache_creation_input_tokens',0)} "
+                     f"cache_read={getattr(u,'cache_read_input_tokens',0)} out={u.output_tokens}")
+        except Exception:
+            pass
         text = response.content[0].text.strip()
         log.info(f"[AI] raw: {text[:300]}")
 

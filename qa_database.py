@@ -195,6 +195,22 @@ def find_candidates(user_msg: str, top_k: int = 4) -> list:
     return [qa for _, qa in scored[:top_k]]
 
 
+def find_exact(user_msg: str) -> dict | None:
+    """หา QA ที่คำถามตรงเป๊ะ (normalized) — ใช้ skip AI สำหรับปุ่ม/quick reply/copy-paste
+    คืน QA เฉพาะเมื่อ normalized user == normalized question ทั้งหมด (ปลอดภัย 100%
+    ไม่มีความเสี่ยงตอบผิด weight/เพศ/ประเภท เพราะตรงตัวอักษรเป๊ะ)
+    """
+    un = normalize(user_msg).strip()
+    un = re.sub(r"\s+", " ", un)
+    if len(un) < 4:
+        return None
+    for qa in QA_LIST:
+        qn = re.sub(r"\s+", " ", normalize(qa["question"]).strip())
+        if qn and un == qn:
+            return qa
+    return None
+
+
 def find_by_id(qa_id: int) -> dict | None:
     """หา QA ตาม id"""
     for qa in QA_LIST:
