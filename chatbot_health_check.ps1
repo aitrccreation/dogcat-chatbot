@@ -77,10 +77,12 @@ elseif ($lastFire) {
 if ($needRestart) {
     Write-Health "UNHEALTHY -> restart: $reason"
     try {
-        Stop-ScheduledTask -TaskName "DogCatLovely Chatbot" -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 3
-        # schtasks /RUN is more reliable than Start-ScheduledTask when the task is
-        # in a transitional state (Start-ScheduledTask gets silently ignored).
+        # Just trigger the task — start_chatbot.bat already runs `taskkill python3.13`
+        # at its start, so it kills the old (stuck) process itself. We do NOT call
+        # Stop-ScheduledTask first: on Session-0 tasks it can block indefinitely,
+        # which killed this script mid-restart on 6/5 (detected but never triggered).
+        # The bat exits quickly (launches via Start-Process), so the task returns to
+        # "Ready" and schtasks /RUN is accepted on the next run.
         & schtasks /RUN /TN "DogCatLovely Chatbot" 2>&1 | Out-Null
         Write-Health "Restart triggered (schtasks /RUN)"
     } catch {
