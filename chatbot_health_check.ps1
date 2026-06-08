@@ -79,6 +79,22 @@ elseif ($lastFire) {
     }
 }
 
+# -- Appointment-job guard --
+# start_chatbot.bat runs taskkill /F /IM python3.13.exe which kills ALL python3.13
+# processes, INCLUDING a running appointment job (they are python3.13 too). On 6/8 the
+# 13:00:02 restart killed the 13:00:01 queue-build mid-run, so the 6/10 T+2 appts never
+# got queued. Defer non-critical restarts during appointment-job windows:
+#   12:30 DRX sync | 13:00 queue build | 18:00 send | 20:15 DRX sync
+# (port-dead is critical so restart anyway; the proactive 11:30 restart keeps the
+#  scheduler fresh so a 13:00 restart should not be needed in the first place.)
+# NOTE: keep this file ASCII-only — PowerShell 5.1 mangles UTF-8 in strings (no BOM).
+$h = $now.Hour; $m = $now.Minute
+$inApptWindow = ($h -eq 12 -and $m -ge 28) -or ($h -eq 13 -and $m -le 5) -or ($h -eq 18 -and $m -le 5) -or ($h -eq 20 -and $m -ge 13 -and $m -le 18)
+if ($needRestart -and $inApptWindow -and $portAlive) {
+    Write-Health "DEFER restart ($reason) -- appointment job window, wont risk killing it"
+    $needRestart = $false
+}
+
 if ($needRestart) {
     Write-Health "UNHEALTHY -> restart: $reason"
     try {
