@@ -40,19 +40,24 @@ if (Test-Path $errLog) {
 $needRestart = $false
 $reason = ""
 
-# Proactive window: 12:00-12:29 (the noon health check)
+# Proactive window: 11:30-12:29 (covers the 11:30 AND 12:00 health checks)
 # APScheduler freezes overnight (gap 20:20 -> next 13:00 is "normal" so undetectable
-# until 13:00 is already missed). Fix: restart proactively at 12:00 so the scheduler is
-# fresh before the first fire (13:00). 12:00 is safe — no appointment job runs then
-# (DRX sync 12:30, queue 13:00), so the restart's taskkill won't interrupt anything.
-$proactiveStart = $now.Date.AddHours(12)                 # 12:00
-$proactiveEnd   = $now.Date.AddHours(12).AddMinutes(30)  # 12:30
+# until 13:00 is already missed). Fix: restart proactively before the first fire (13:00).
+# Why TWO ticks: on 6/8 the 12:00 tick was skipped by Windows Task Scheduler, so a
+# single-tick (12:00 only) window missed it and 13:00 was lost. 11:30+12:00 = redundancy.
+# Window ends at 12:30 to avoid colliding with the 12:30 DRX-sync task (its python3.13
+# would be killed by the restart's taskkill). A marker file ensures only ONE proactive
+# restart per day even if both ticks fire.
+$markerFile = "$logDir\last_restart_date.txt"
+$todayStr   = $now.ToString("yyyy-MM-dd")
+$restartedToday = (Test-Path $markerFile) -and ((Get-Content $markerFile -Raw -ErrorAction SilentlyContinue).Trim() -eq $todayStr)
+$inProactiveWindow = ($now.Hour -eq 11 -and $now.Minute -ge 30) -or ($now.Hour -eq 12 -and $now.Minute -lt 30)
 
 if (-not $portAlive) {
     $needRestart = $true
     $reason = "port 5000 not responding"
 }
-elseif ($now -ge $proactiveStart -and $now -lt $proactiveEnd -and (-not $lastFire -or $lastFire.Date -lt $now.Date)) {
+elseif ($inProactiveWindow -and -not $restartedToday -and (-not $lastFire -or $lastFire.Date -lt $now.Date)) {
     # Scheduler hasn't fired today yet and we're in the pre-13:00 window -> refresh it
     $needRestart = $true
     $reason = "proactive pre-13:00 restart (scheduler stale since $(if ($lastFire) { $lastFire.ToString('MM-dd HH:mm') } else { 'never' }))"
@@ -84,6 +89,10 @@ if ($needRestart) {
         # The bat exits quickly (launches via Start-Process), so the task returns to
         # "Ready" and schtasks /RUN is accepted on the next run.
         & schtasks /RUN /TN "DogCatLovely Chatbot" 2>&1 | Out-Null
+        # บันทึก marker เฉพาะ proactive restart → กัน double-restart ในหน้าต่างเดียวกัน
+        if ($reason -like "proactive*") {
+            Set-Content -Path $markerFile -Value $todayStr -Encoding UTF8
+        }
         Write-Health "Restart triggered (schtasks /RUN)"
     } catch {
         Write-Health "Restart failed: $_"
