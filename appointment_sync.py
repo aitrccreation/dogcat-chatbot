@@ -579,9 +579,11 @@ def _auto_register_sibling_hns(adb, all_customers: list[dict]) -> int:
     new_count = 0
 
     for cust in all_customers:
-        uid   = cust.get("line_user_id", "")
-        hn    = cust.get("hn", "")
-        owner = cust.get("owner_name", "").strip()
+        # ใช้ (... or "") กัน None — บาง row จาก gsheet มี owner_name/hn = None
+        # (ไม่ใช่ค่าว่าง) ทำให้ .strip() crash → sibling auto-register หยุดกลางคัน
+        uid   = (cust.get("line_user_id") or "").strip()
+        hn    = (cust.get("hn") or "").strip()
+        owner = (cust.get("owner_name") or "").strip()
         # ข้ามถ้ายังไม่มีชื่อ หรือ HN ไม่มี "-"
         if not uid or not hn or not owner or "-" not in hn:
             continue
