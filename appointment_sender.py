@@ -419,9 +419,12 @@ def main():
                 stats["noline"] += 1
             continue
 
-        # Determine round — ส่งเฉพาะ T+2 ครั้งเดียว
+        # Determine round — ส่ง T+2 (ปกติ) หรือ T+1 (catch-up) ครั้งเดียว
+        # T+1 = นัดที่ DRX เพิ่งเพิ่ม/ลูกค้าเพิ่งลงทะเบียน หลังพ้น T+2 window ของเมื่อวาน
+        #       (queue build window = {T+1, T+2} ต้องให้ sender ส่ง T+1 ด้วย ไม่งั้นค้าง)
+        # r1_at กันส่งซ้ำ — ส่งครั้งเดียวต่อนัด
         which_round = None
-        if days_until == 2 and not r1_at:
+        if days_until in (2, 1) and not r1_at:
             which_round = 1
         else:
             stats["skip"] += 1
