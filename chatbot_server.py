@@ -1254,7 +1254,8 @@ def build_answer_reply(qa_item: dict) -> dict:
 # ──────────────────────────────────────────────
 REGISTER_TRIGGERS = [
     "ลงทะเบียน", "ลงทะเบียนรับนัด", "register", "/register",
-    "สมัครรับนัด", "ผูกบัญชี", "ผูก hn", "เชื่อม hn",
+    "สมัครรับนัด", "สมัคร", "ผูกบัญชี", "ผูก hn", "เชื่อม hn",
+    "รับแจ้งนัด", "แจ้งนัด", "รับนัด", "ลงชื่อ",
 ]
 
 # ── Rich Menu ปุ่มขวา: "ติดต่อคลินิก" ──
@@ -1340,6 +1341,14 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
             ),
             "images": [],
         }
+
+    # State 1.7: ลูกค้าส่ง HN มาตรงๆ โดยไม่ได้พิมพ์ "ลงทะเบียน" ก่อน
+    #            (พฤติกรรมที่พบบ่อยที่สุด — ลูกค้าเห็นว่าต้องส่ง HN ก็ส่งเลย)
+    #            HN pattern เจาะจง (\d{6,7}-\d+) ไม่ชนคำถาม Q&A → ปลอดภัย
+    #            ตั้ง register_step แล้วให้ State 2 ด้านล่างประมวลผลต่อในรอบเดียว
+    if sess.get("register_step") != "await_hn" and adb.normalize_hn(text):
+        log.info(f"[Register] bare HN detected ({text!r}) — auto-enter registration")
+        sess["register_step"] = "await_hn"
 
     # State 2: awaiting HN
     if sess.get("register_step") == "await_hn":
