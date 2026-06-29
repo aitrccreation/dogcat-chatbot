@@ -1451,20 +1451,23 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     """
     sess = get_session(user_id)
 
-    # ── 0. Handoff cooldown → บอทเงียบ (ให้พนักงานคุย) ──
+    # ── 0.4 Rich Menu ปุ่มขวา: "ติดต่อคลินิก" — ทำงานเสมอ (ก่อน cooldown) ──
+    if _is_contact_clinic_trigger(user_text):
+        return {"text": CONTACT_CLINIC_REPLY, "images": []}
+
+    # ── 0.5 Registration flow (HN ↔ LINE userId) — ต้องอยู่ "ก่อน" handoff cooldown! ──
+    #    บั๊กเดิม: cooldown เช็คก่อน → ลูกค้าที่เคยส่งข้อความไม่ตรง (Claude ปิด → เข้า
+    #    cooldown 12 ชม.) จะส่ง HN/ลงทะเบียนไม่ได้เลย บอทเงียบ 12 ชม. (เคส 690058-1)
+    #    การลงทะเบียนเป็น action ที่ลูกค้าตั้งใจ → ต้องตอบเสมอ ไม่ติด cooldown
+    register_reply = handle_register_flow(sess, user_id, user_text)
+    if register_reply is not None:
+        return register_reply
+
+    # ── 0. Handoff cooldown → บอทเงียบ (ให้พนักงานคุย) สำหรับคำถาม Q&A อื่นๆ ──
     if is_handed_off(sess):
         remaining = int(sess["handoff_until"] - datetime.now().timestamp())
         log.info(f"[{user_id}] handoff cooldown {remaining}s remaining — skip")
         return None
-
-    # ── 0.4 Rich Menu ปุ่มขวา: "ติดต่อคลินิก" ──
-    if _is_contact_clinic_trigger(user_text):
-        return {"text": CONTACT_CLINIC_REPLY, "images": []}
-
-    # ── 0.5 Registration flow (HN ↔ LINE userId mapping) ──
-    register_reply = handle_register_flow(sess, user_id, user_text)
-    if register_reply is not None:
-        return register_reply
 
     # ── 1. Greeting → reset ──
     intent = detect_intent(user_text)
