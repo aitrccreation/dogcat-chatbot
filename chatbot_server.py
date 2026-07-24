@@ -94,7 +94,7 @@ FB_PAGE_ACCESS_TOKEN      = os.environ.get("FB_TOKEN",  "")
 FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_2026")  # set FB_VERIFY env var in production
 # Lovely Bot → แจ้งเตือน admin เมื่อบอทตอบไม่ได้
 LOVELY_BOT_TOKEN          = os.environ.get("LOVELY_BOT_TOKEN", "")
-ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "")
+ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "Ude09abe7b1f73ee901c047ccfe693dd8").strip()
 CLINIC_PHONE              = "080-4288181"    # สาขาราชวิถี (หลัก)
 CLINIC_PHONE2             = "090-1556446"   # สาขาหลังม.ศิลปากร
 CLINIC_LINE_OA            = "@dogcatlovely" # LINE OA
@@ -915,8 +915,9 @@ def handle_appointment_postback(reply_token: str, user_id: str, data: str):
             "ขออภัยในความไม่สะดวกค่ะ 🙏"
         )
         line_reply_text(reply_token, reply_text)
-        # แจ้ง admin + อัพ local xlsx ผ่าน ngrok
+        # Railway ส่ง basic notification ทันที (fallback กรณีเครื่อง local ปิดอยู่)
         _notify_admin_appt("reschedule", hn_val, pet_name, thai_d, user_id)
+        # local api_queue_response จะส่ง notification ฉบับเต็ม (+ เบอร์โทร) ถ้าเครื่องเปิดอยู่
         _update_local_queue(qid_int, "Reschedule", hn_val, pet_name, thai_d)
 
 
@@ -1359,6 +1360,13 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
 
         hn = adb.normalize_hn(text)
         if not hn:
+            # ถ้าข้อความไม่ดูเหมือนพยายามส่ง HN (ไม่มีตัวเลข/คำ HN)
+            # → ออกจาก register flow แล้วให้ Q&A จัดการต่อตามปกติ
+            # (ป้องกันบอทวนถาม HN ซ้ำเมื่อลูกค้าถามเรื่องอื่น)
+            if not re.search(r'\d{5,}', text) and not re.search(r'\bhn\b', text.lower()):
+                log.info(f"[Register] await_hn: non-HN message detected ({repr(text)[:40]}) — exit register flow → Q&A")
+                sess["register_step"] = None
+                return None  # fall through to Q&A
             return {
                 "text": (
                     "🤔 ขออภัยค่ะ ไม่พบเลข HN ในข้อความ\n"
@@ -2038,6 +2046,48 @@ def api_run_job(job: str):
         _sys.stdout = old_stdout
 
 
+def _notify_reschedule_with_phone(hn: str, pet: str, date: str, qid: int):
+    """ส่งสรุปขอเลื่อนนัดให้ Wirote — รวมชื่อเจ้าของ + เบอร์โทรจาก opd_db (รันบน local เท่านั้น)"""
+    token = LOVELY_BOT_TOKEN or LINE_CHANNEL_ACCESS_TOKEN
+    if not token or not ADMIN_LINE_ID:
+        return
+    owner = ""
+    phone = ""
+    try:
+        import opd_db
+        petid = hn.split("-")[0] if "-" in hn else hn
+        with opd_db._connect() as conn:
+            row = conn.execute(
+                "SELECT c.full_name, c.tel FROM pets p "
+                "JOIN customers c ON p.cuid = c.uid WHERE p.petid = ? LIMIT 1",
+                (petid,),
+            ).fetchone()
+            if row:
+                owner = row[0] or ""
+                phone = row[1] or ""
+    except Exception as e:
+        log.warning(f"[reschedule notify] opd_db lookup failed: {e}")
+    msg = (
+        f"⚠️ ขอเลื่อนนัด\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"🐾 น้อง{pet}\n"
+        f"👤 เจ้าของ: {owner or '-'}\n"
+        f"📅 นัดเดิม: {date}\n"
+        f"🆔 HN: {hn}\n"
+        f"📞 เบอร์: {phone or 'ไม่มีข้อมูล'}"
+    )
+    try:
+        req.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"to": ADMIN_LINE_ID, "messages": [{"type": "text", "text": msg}]},
+            timeout=10,
+        )
+        log.info(f"[reschedule notify] sent to admin for HN={hn}")
+    except Exception as e:
+        log.warning(f"[reschedule notify] push failed: {e}")
+
+
 @app.route("/api/queue_response", methods=["POST"])
 def api_queue_response():
     """รับ queue response จาก Railway (confirm/reschedule) → อัพ local Excel
@@ -2061,6 +2111,8 @@ def api_queue_response():
         adb.update_send_queue_status(int(qid), status, f"{status} via LINE (Railway)")
         adb.log_event(status, hn, "", f"qid={qid} {pet} {date}", "OK")
         log.info(f"[queue_response] qid={qid} → {status} (hn={hn} pet={pet})")
+        if status == "Reschedule":
+            _notify_reschedule_with_phone(hn, pet, date, int(qid))
         return jsonify({"ok": True, "qid": qid, "status": status})
     except Exception as e:
         log.exception(f"[queue_response] error: {e}")
