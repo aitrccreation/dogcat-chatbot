@@ -781,7 +781,7 @@ def line_reply_with_images(reply_token: str, reply: dict):
 def _notify_admin_appt(action: str, hn: str, pet: str, date: str, user_id: str):
     """แจ้ง admin ทาง LINE เมื่อลูกค้ายืนยัน/เลื่อนนัด"""
     admin_id = ADMIN_LINE_ID
-    token    = LINE_CHANNEL_ACCESS_TOKEN   # Lovely Bot หรือ OA token
+    token    = LOVELY_BOT_TOKEN or LINE_CHANNEL_ACCESS_TOKEN
     if not admin_id or not token:
         return
     emoji  = "✅" if action == "confirm" else "⚠️"
