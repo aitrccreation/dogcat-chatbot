@@ -22,6 +22,10 @@ drx_opd.tmp.db
 # Backups (snapshot xlsx — โตเรื่อยๆ ไม่ต้องเก็บใน git)
 backups/
 
+# ฐานข้อมูลจริง — source of truth คือ Google Sheet, สำรองที่ backups/
+# โครงสร้างไฟล์สร้างใหม่ได้ด้วย `python init_appointments_xlsx.py`
+appointments.xlsx
+
 # Python cache
 __pycache__/
 *.pyc
