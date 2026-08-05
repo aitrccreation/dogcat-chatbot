@@ -14,6 +14,13 @@ daily_post.py
 
 # DRX data (ข้อมูลสัตว์ไข้ลับ — local cache only)
 drx_data.json
+drx_opd.db
+drx_opd.db-shm
+drx_opd.db-wal
+drx_opd.tmp.db
+
+# Backups (snapshot xlsx — โตเรื่อยๆ ไม่ต้องเก็บใน git)
+backups/
 
 # Python cache
 __pycache__/

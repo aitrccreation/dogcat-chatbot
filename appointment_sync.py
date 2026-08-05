@@ -36,11 +36,16 @@ from zipfile import BadZipFile as _BadZipFile
 import time as _time
 
 def load_workbook(path, **kw):
-    """load_workbook with retry — ป้องกัน BadZipFile เมื่อไฟล์ถูก lock"""
+    """load_workbook พร้อม retry — Excel/สคริปต์อื่นอาจ lock ไฟล์อยู่ชั่วคราว
+    retry เฉพาะ error ที่หายเองได้ (zip อ่านไม่จบ / ไฟล์ถูก lock)
+    error ถาวรเช่นไฟล์ไม่มีจริง โยนออกทันที ไม่ต้องรอครบ 50 วิ
+    """
     for attempt in range(6):
         try:
             return _load_workbook(path, **kw)
-        except (_BadZipFile, Exception) as e:
+        except FileNotFoundError:
+            raise
+        except (_BadZipFile, PermissionError, OSError):
             if attempt == 5:
                 raise
             _time.sleep(10)
