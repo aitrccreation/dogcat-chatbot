@@ -131,11 +131,10 @@ def register_customer(
         ws = wb["Customers"]
         now = _now_iso()
 
-        # ── ตรวจ existing row ของ line_user_id นี้ ──
+        # ── ตรวจ existing row โดยใช้ (uid, hn) เป็น key — ไม่ใช่ uid อย่างเดียว ──
         for row in ws.iter_rows(min_row=2):
-            if row[0].value == line_user_id:
-                # update existing (เปลี่ยน HN หรืออัพข้อมูล)
-                row[1].value = hn
+            if row[0].value == line_user_id and str(row[1].value or "").strip() == hn.strip():
+                # update existing
                 if owner_name: row[2].value = owner_name
                 if pet_name:   row[3].value = pet_name
                 if pet_type:   row[4].value = pet_type
