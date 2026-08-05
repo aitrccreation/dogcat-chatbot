@@ -1,4 +1,4 @@
-# เพิ่ม Task Scheduler รอบ catch-up 20:30
+﻿# เพิ่ม Task Scheduler รอบ catch-up 20:30
 # (หลัง DRX sync 20:15 — รับนัดที่หมอจองหลัง sender รอบ 18:00 ไปแล้ว)
 #
 # ทำไมต้องมีรอบนี้:

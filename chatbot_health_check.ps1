@@ -1,4 +1,4 @@
-# Chatbot Health Monitor
+﻿# Chatbot Health Monitor
 # Runs every 30 minutes via Task Scheduler
 # Checks:
 #   1. Chatbot port 5000 responds

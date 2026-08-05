@@ -1,4 +1,4 @@
-# Setup Task Scheduler for appointment workflow
+﻿# Setup Task Scheduler for appointment workflow
 #   12:30 — sync DRX (รอบเช้า) → ให้ queue build 13:00 ใช้ข้อมูลสด
 #   13:00 — build Send_Queue (จาก DRX data ที่มี)
 #   18:00 — send LINE reminders (ส่งล่วงหน้า 2 วัน ครั้งเดียว)
