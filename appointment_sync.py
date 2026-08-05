@@ -31,7 +31,19 @@ try:
 except Exception:
     pass
 
-from openpyxl import load_workbook
+from openpyxl import load_workbook as _load_workbook
+from zipfile import BadZipFile as _BadZipFile
+import time as _time
+
+def load_workbook(path, **kw):
+    """load_workbook with retry — ป้องกัน BadZipFile เมื่อไฟล์ถูก lock"""
+    for attempt in range(6):
+        try:
+            return _load_workbook(path, **kw)
+        except (_BadZipFile, Exception) as e:
+            if attempt == 5:
+                raise
+            _time.sleep(10)
 
 XLSX = Path(__file__).parent / "appointments.xlsx"
 DRX_JSON = Path(__file__).parent / "drx_data.json"
@@ -316,11 +328,21 @@ def collect_send_queue():
             ws_q.cell(row=row_idx, column=5, value=a["owner_name"])
             ws_q.cell(row=row_idx, column=6, value=a["pet_name"])
             ws_q.cell(row=row_idx, column=7, value=a["vet"])
-            # update line_user_id ถ้าลูกค้าเพิ่งลงทะเบียน
+            # ── refresh line_user_id ให้ตรง Customers เสมอ ──
+            # ไม่ใช่แค่ตอนช่องว่าง: คนที่ 2 ในบ้านเพิ่งลงทะเบียน / UID ถูก block /
+            # HN แก้เลขใหม่ → คิวต้องตามให้ทัน (r1_at กันส่งซ้ำอยู่แล้ว)
             user_id = hn_to_userid.get(a["hn"], "")
-            if user_id and not ws_q.cell(row=row_idx, column=9).value:
+            cur_uid = str(ws_q.cell(row=row_idx, column=9).value or "").strip()
+            if user_id != cur_uid:
                 ws_q.cell(row=row_idx, column=9, value=user_id)
+                print(f"   🔄 qid={ws_q.cell(row=row_idx, column=1).value} HN={a['hn']} "
+                      f"UID: {cur_uid or '(ว่าง)'} → {user_id or '(ว่าง)'}")
+            # status ตามการมี UID — แตะเฉพาะ NoLine/Pending ไม่ยุ่ง Sent/Confirmed
+            cur_status = str(ws_q.cell(row=row_idx, column=10).value or "").strip()
+            if user_id and cur_status == "NoLine":
                 ws_q.cell(row=row_idx, column=10, value="Pending")
+            elif not user_id and cur_status == "Pending":
+                ws_q.cell(row=row_idx, column=10, value="NoLine")
             continue
         # new row
         user_id = hn_to_userid.get(a["hn"], "")
@@ -353,7 +375,7 @@ def sync_drx_from_gsheet():
         ws = gsheet_db._get_drx()
         if not ws:
             return 0
-        records = ws.get_all_records()
+        records = ws.get_all_records(numericise_ignore=["all"])
         if not records:
             print("   [drx-pull] no DRX data ใน Google Sheet")
             return 0
@@ -391,9 +413,13 @@ def sync_drx_from_gsheet():
 
 
 def sync_customers_from_gsheet():
-    """ดึง customers จาก Google Sheet (persistent storage) → อัพ local Customers"""
+    """ดึง customers จาก Google Sheet (persistent storage) → อัพ local Customers sheet
+    Batch update: load xlsx 1 ครั้ง, อัพทุก customer, save 1 ครั้ง
+    (เดิมเรียก adb.register_customer() ทีละคน = 291 × load+save → ช้ามาก)
+    """
     try:
         import gsheet_db
+        import appointment_db as adb
     except ImportError:
         return 0
     if not gsheet_db.is_enabled():
@@ -403,20 +429,70 @@ def sync_customers_from_gsheet():
         if not customers:
             print("   [gsheet-sync] ไม่มี customers ใน Google Sheet")
             return 0
-        import appointment_db as adb
+
+        wb = load_workbook(XLSX)
+        ws = wb["Customers"]
+
+        # key = (uid, hn) — ไม่ใช่ uid อย่างเดียว เพราะ 1 LINE ID ผูกได้หลาย HN
+        # (เคยใช้ uid อย่างเดียวแล้วเขียนทับ HN ทำให้ sibling หายแล้วถูก re-add ทุกรอบ)
+        key_to_row: dict[tuple[str, str], int] = {}
+        for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=2):
+            uid_val = row[0].value
+            if uid_val:
+                key_to_row[(str(uid_val).strip(), str(row[1].value or "").strip())] = row_idx
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         updated = 0
-        for c in customers:
-            uid = c.get("line_user_id")
-            hn  = c.get("hn")
-            if uid and hn:
-                adb.register_customer(
-                    line_user_id=uid, hn=hn,
-                    owner_name=c.get("owner_name", ""),
-                    pet_name=c.get("pet_name", ""),
-                    phone=c.get("phone", ""),
-                )
-                updated += 1
+        gs_fixes = []   # แถวที่ Google Sheet ยังว่าง → เติมกลับขึ้นไป
+        for gs_row, c in enumerate(customers, start=2):
+            uid = str(c.get("line_user_id") or "").strip()
+            hn  = str(c.get("hn") or "").strip()
+            if not uid or not hn:
+                continue
+            was = [
+                str(c.get("owner_name") or "").strip(),
+                str(c.get("pet_name")   or "").strip(),
+                str(c.get("pet_type")   or "").strip(),
+                str(c.get("phone")      or "").strip(),
+            ]
+            owner, pet, ptype, phone = adb.enrich_from_drx(hn, *was)
+            if [owner, pet, ptype, phone] != was:
+                gs_fixes.append({
+                    "range": f"C{gs_row}:F{gs_row}",
+                    "values": [[owner, pet, ptype, phone]],
+                })
+            r = key_to_row.get((uid, hn))
+            if r:
+                if owner: ws.cell(r, 3, owner)
+                if pet:   ws.cell(r, 4, pet)
+                if ptype: ws.cell(r, 5, ptype)
+                if phone: ws.cell(r, 6, phone)
+                ws.cell(r, 8, now)  # last_active
+                if c.get("note"): ws.cell(r, 9, c["note"])
+            else:
+                ws.append([
+                    uid, hn, owner, pet, ptype, phone,
+                    c.get("registered_at", now), now,
+                    c.get("note", ""),
+                ])
+                key_to_row[(uid, hn)] = ws.max_row
+            updated += 1
+
+        wb.save(XLSX)
         print(f"   [gsheet-sync] ✅ synced {updated} customers จาก Google Sheet")
+
+        # ── เติมช่องว่าง C/D/E/F กลับขึ้น Google Sheet (self-heal) ──
+        if gs_fixes:
+            try:
+                sheet = gsheet_db._get_sheet()
+                for i in range(0, len(gs_fixes), 60):
+                    sheet.batch_update(gs_fixes[i:i+60], value_input_option="RAW")
+                    if i + 60 < len(gs_fixes):
+                        _time.sleep(2)
+                print(f"   [gsheet-sync] ✅ เติมช่องว่างกลับ Google Sheet {len(gs_fixes)} แถว")
+            except Exception as e:
+                print(f"   [gsheet-sync] ⚠️ push-back error: {e}")
+
         return updated
     except Exception as e:
         print(f"   [gsheet-sync] ⚠️ error: {e}")

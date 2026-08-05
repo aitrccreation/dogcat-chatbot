@@ -181,7 +181,7 @@ def find_customer_by_user_id(line_user_id: str) -> Optional[dict]:
     if not sheet:
         return None
     try:
-        records = sheet.get_all_records()
+        records = sheet.get_all_records(numericise_ignore=["all"])
         for r in records:
             if str(r.get("line_user_id", "")) == line_user_id:
                 return r
@@ -195,7 +195,7 @@ def find_customers_by_hn(hn: str) -> list[dict]:
     if not sheet:
         return []
     try:
-        records = sheet.get_all_records()
+        records = sheet.get_all_records(numericise_ignore=["all"])
         return [r for r in records if str(r.get("hn", "")).strip() == hn.strip()]
     except Exception as e:
         log.warning(f"[gsheet] find_by_hn error: {e}")
@@ -207,7 +207,7 @@ def get_all_customers() -> list[dict]:
     if not sheet:
         return []
     try:
-        return sheet.get_all_records()
+        return sheet.get_all_records(numericise_ignore=["all"])
     except Exception as e:
         log.warning(f"[gsheet] get_all error: {e}")
         return []
@@ -230,7 +230,7 @@ def register_customer(
     if not sheet:
         return None
     try:
-        records = sheet.get_all_records()
+        records = sheet.get_all_records(numericise_ignore=["all"])
         now = _now_iso()
 
         # หา existing row โดยใช้ (line_user_id + hn) เป็น key
@@ -322,7 +322,7 @@ def get_all_responses() -> list[dict]:
     if not ws:
         return []
     try:
-        return ws.get_all_records()
+        return ws.get_all_records(numericise_ignore=["all"])
     except Exception:
         return []
 

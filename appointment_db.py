@@ -99,6 +99,63 @@ def get_line_uids_by_hn(hn: str) -> list[str]:
     return [c["line_user_id"] for c in find_customers_by_hn(hn) if c.get("line_user_id")]
 
 
+def _normalize_phone(phone) -> str:
+    """คืนเบอร์เป็น string พร้อม 0 นำหน้า — gspread/xlsx ชอบแปลงเป็นตัวเลขแล้ว 0 หาย"""
+    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
+    if len(digits) == 9 and digits[0] in "2689":
+        digits = "0" + digits
+    return digits
+
+
+def enrich_from_drx(hn: str, owner_name: str = "", pet_name: str = "",
+                    pet_type: str = "", phone: str = "") -> tuple[str, str, str, str]:
+    """เติมช่องที่ว่างจากข้อมูล DRX (SQLite cache → MySQL) — คืน (owner, pet, type, phone)
+    เรียกทุกครั้งที่ลงทะเบียน เพื่อให้ column C/D/E/F ไม่มีช่องว่าง
+    """
+    phone = _normalize_phone(phone)
+    if owner_name and pet_name and pet_type and phone:
+        return owner_name, pet_name, pet_type, phone
+
+    prof = None
+    try:
+        import opd_db
+        prof = opd_db.get_pet_profile(hn)
+    except Exception:
+        pass
+
+    if not prof or not (prof.get("pet_type") and prof.get("phone")):
+        try:
+            import drx_db
+            r = drx_db.fetch_one(
+                "SELECT p.petid, p.petname, p.pettype, "
+                "       CONCAT(c.firstname,' ',c.lastname) AS owner, c.mobile_1, c.tel_1 "
+                "FROM pet p LEFT JOIN customer c ON p.cuid = c.uid "
+                "WHERE p.petid = %s LIMIT 1", (hn,)
+            )
+            if r:
+                base = prof or {}
+                prof = {
+                    "pet_name":   base.get("pet_name")   or r.get("petname"),
+                    "pet_type":   base.get("pet_type")   or r.get("pettype"),
+                    "owner_name": base.get("owner_name") or r.get("owner"),
+                    "phone":      base.get("phone")      or r.get("mobile_1") or r.get("tel_1"),
+                }
+        except Exception:
+            pass
+
+    if prof:
+        # DRX เก็บคำนำหน้าไว้ใน full_name — "ไม่ระบุ" คือยังไม่ได้กรอก ไม่ใช่ชื่อจริง
+        drx_owner = str(prof.get("owner_name") or "").strip()
+        if drx_owner.startswith("ไม่ระบุ"):
+            drx_owner = drx_owner[len("ไม่ระบุ"):].strip()
+        owner_name = owner_name or drx_owner
+        pet_name   = pet_name   or str(prof.get("pet_name")   or "").strip()
+        pet_type   = pet_type   or str(prof.get("pet_type")   or "").strip()
+        phone      = phone      or _normalize_phone(prof.get("phone"))
+
+    return owner_name, pet_name, pet_type, phone
+
+
 def register_customer(
     line_user_id: str,
     hn: str,
@@ -111,6 +168,9 @@ def register_customer(
     """เพิ่ม/อัพเดต customer mapping. Returns dict หรือ None ถ้า HN เต็มแล้ว
     เขียนทั้ง xlsx (local cache) และ Google Sheet (persistent) ถ้าตั้ง env vars แล้ว
     """
+    owner_name, pet_name, pet_type, phone = enrich_from_drx(
+        hn, owner_name, pet_name, pet_type, phone
+    )
     # ── ลอง write ไป Google Sheet ก่อน (ถ้าตั้งไว้) ──
     try:
         import gsheet_db
@@ -248,6 +308,10 @@ def register_sibling_hn(
     hn = (hn or "").strip()
     if not hn or not line_user_id:
         return None
+
+    owner_name, pet_name, pet_type, phone = enrich_from_drx(
+        hn, owner_name, pet_name, pet_type, phone
+    )
 
     # ── ลอง write ไป Google Sheet ก่อน (ถ้าตั้งไว้) ──
     try:
