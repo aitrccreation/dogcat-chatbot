@@ -100,11 +100,24 @@ def get_line_uids_by_hn(hn: str) -> list[str]:
 
 
 def _normalize_phone(phone) -> str:
-    """คืนเบอร์เป็น string พร้อม 0 นำหน้า — gspread/xlsx ชอบแปลงเป็นตัวเลขแล้ว 0 หาย"""
-    digits = "".join(ch for ch in str(phone or "") if ch.isdigit())
-    if len(digits) == 9 and digits[0] in "2689":
-        digits = "0" + digits
-    return digits
+    """คืนเบอร์เดียวเป็น string พร้อม 0 นำหน้า
+
+    - gspread/xlsx แปลงเบอร์เป็นตัวเลขแล้ว 0 นำหน้าหาย → เติมกลับ
+    - DRX บางเรคคอร์ดใส่ 2 เบอร์ในช่องเดียว ("081...,094...") → เอาเบอร์แรก
+      (ห้ามตัดอักขระทิ้งทั้งหมดก่อน ไม่งั้นตัวคั่นหายแล้วเลขติดกันเป็น 20 หลัก)
+    """
+    import re
+    for part in re.split(r"[,;/|]+|\s+", str(phone or "").strip()):
+        digits = "".join(ch for ch in part if ch.isdigit())   # เก็บ 081-199-7021 ไว้ได้
+        if not digits:
+            continue
+        if len(digits) == 9 and digits[0] in "2689":
+            digits = "0" + digits
+        # กันกรณีเบอร์ติดกันโดยไม่มีตัวคั่น — เอา 10 หลักแรก
+        if len(digits) > 10 and digits.startswith("0"):
+            digits = digits[:10]
+        return digits
+    return ""
 
 
 def enrich_from_drx(hn: str, owner_name: str = "", pet_name: str = "",
