@@ -1670,6 +1670,21 @@ def handle_line_event(event: dict):
             user_id   = (event.get("source") or {}).get("userId", "anonymous")
             log.info(f"LINE msg from {user_id}: {user_text!r}")
 
+            # ── Admin commands (Wirote ดึงข้อมูล OPD/สรุปยอดผ่านแชท) ──
+            # เช็คก่อน Q&A flow เสมอ, gate ด้วย user_id == ADMIN_LINE_ID เท่านั้น
+            # จึงไม่มีทางกระทบลูกค้า — ถ้าไม่ตรงคำสั่งใดๆ (คืน None) จะ fall-through
+            # ไป handle_qa_flow ตามปกติ (เผื่อ Wirote พิมพ์ทดสอบ flow ลูกค้าเอง)
+            if user_id == ADMIN_LINE_ID:
+                try:
+                    import bot_admin_commands
+                    admin_reply = bot_admin_commands.handle_admin_command(user_text)
+                except Exception as e:
+                    log.exception(f"[admin cmd] error: {e}")
+                    admin_reply = None
+                if admin_reply is not None:
+                    line_reply_text(reply_token, admin_reply["text"])
+                    return
+
             # ผ่าน Q&A flow
             reply = handle_qa_flow(user_id, user_text)
             if reply is None:
@@ -1844,6 +1859,42 @@ def test_reset():
     user_id = request.args.get("user", "tester")
     reset_session(user_id)
     return jsonify({"status": "reset", "user": user_id})
+
+
+@app.route("/test_admin_cmd", methods=["GET"])
+def test_admin_cmd():
+    """ทดสอบ admin command โดยตรงผ่าน HTTP (ไม่ต้องส่ง LINE จริง)
+    ใช้ debug ได้สะดวกเพราะ log ของ process นี้ถูก buffer ไว้ (redirect ลงไฟล์) อ่านไม่ทันที
+    เช่น: curl "http://localhost:5000/test_admin_cmd?msg=สรุปวันนี้" """
+    msg = request.args.get("msg", "สรุปวันนี้")
+    result = {"msg": msg}
+    try:
+        import bot_admin_commands
+        result["admin_reply"] = bot_admin_commands.handle_admin_command(msg)
+    except Exception as e:
+        import traceback
+        result["error"] = str(e)
+        result["traceback"] = traceback.format_exc()[-800:]
+    return jsonify(result)
+
+
+@app.route("/api/admin_cmd", methods=["POST"])
+def api_admin_cmd():
+    """ให้ Railway ยิงกลับมาเครื่อง local ผ่าน ngrok เพื่อ query ข้อมูล OPD/สรุปยอด
+    (Railway ไม่มี drx_opd.db ในเครื่องตัวเอง — ข้อมูลผู้ป่วยอยู่ที่เครื่องคลินิกที่เดียว)
+    Header: X-API-Key: <INTERNAL_API_KEY>"""
+    key = request.headers.get("X-API-Key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    msg = (request.json or {}).get("msg", "")
+    try:
+        import bot_admin_commands
+        reply = bot_admin_commands.handle_admin_command(msg, allow_remote=False)
+    except Exception as e:
+        import traceback
+        log.exception(f"[api_admin_cmd] error: {e}")
+        return jsonify({"error": str(e), "traceback": traceback.format_exc()[-800:]}), 500
+    return jsonify({"reply": reply})
 
 
 # ──────────────────────────────────────────────
