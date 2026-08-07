@@ -96,6 +96,9 @@ FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_202
 LOVELY_BOT_TOKEN          = os.environ.get("LOVELY_BOT_TOKEN", "")
 ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "Ude09abe7b1f73ee901c047ccfe693dd8").strip()
 CLINIC_PHONE              = "080-4288181"    # สาขาราชวิถี (หลัก)
+
+# ── ชั่วคราว: log ผู้ส่งล่าสุด ใช้ debug หา userId จริงตอน channel เปลี่ยน ──
+_recent_senders: list = []
 CLINIC_PHONE2             = "090-1556446"   # สาขาหลังม.ศิลปากร
 CLINIC_LINE_OA            = "@dogcatlovely" # LINE OA
 CLINIC_LINE_URL           = "https://lin.ee/7bV54ar"
@@ -1669,6 +1672,8 @@ def handle_line_event(event: dict):
             user_text = event.get("message", {}).get("text", "").strip()
             user_id   = (event.get("source") or {}).get("userId", "anonymous")
             log.info(f"LINE msg from {user_id}: {user_text!r}")
+            _recent_senders.append({"user_id": user_id, "text": user_text})
+            del _recent_senders[:-10]
 
             # ── Admin commands (Wirote ดึงข้อมูล OPD/สรุปยอดผ่านแชท) ──
             # เช็คก่อน Q&A flow เสมอ, gate ด้วย user_id == ADMIN_LINE_ID เท่านั้น
@@ -1895,6 +1900,16 @@ def api_admin_cmd():
         log.exception(f"[api_admin_cmd] error: {e}")
         return jsonify({"error": str(e), "traceback": traceback.format_exc()[-800:]}), 500
     return jsonify({"reply": reply})
+
+
+@app.route("/api/recent_senders", methods=["GET"])
+def api_recent_senders():
+    """ชั่วคราว: ดู userId ล่าสุดที่ทักบอทเข้ามา ใช้หา LINE_TARGET_ID จริงตอนเปลี่ยน channel
+    Header: X-API-Key: <INTERNAL_API_KEY>"""
+    key = request.headers.get("X-API-Key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    return jsonify({"recent_senders": _recent_senders})
 
 
 # ──────────────────────────────────────────────
