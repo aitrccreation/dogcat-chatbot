@@ -107,14 +107,22 @@ def run_daily_summary():
         data = line_sender.load_data()
         msg  = line_sender.build_message(data)
         log.info(f"[Scheduler] Built message ({len(msg)} chars), sending to LINE...")
-        line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, msg)
+        ok_main = line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, msg)
 
         # 3. ส่ง stock message แยก — เฉพาะรอบ 20:xx (20:20)
+        ok_stock = True
         if now.hour == 20:
             stock_msg = line_sender.build_stock_message(data)
             log.info(f"[Scheduler] Stock message ({len(stock_msg)} chars), sending...")
-            line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, stock_msg)
-        log.info("[Scheduler] Daily summary sent successfully")
+            ok_stock = line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, stock_msg)
+
+        if ok_main and ok_stock:
+            log.info("[Scheduler] Daily summary sent successfully")
+        else:
+            log.error(
+                f"[Scheduler] Daily summary FAILED to send "
+                f"(main={'OK' if ok_main else 'FAIL'}, stock={'OK' if ok_stock else 'FAIL'})"
+            )
     except Exception as e:
         log.exception(f"[Scheduler] Error in daily summary: {e}")
 
