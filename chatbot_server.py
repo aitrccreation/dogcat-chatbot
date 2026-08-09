@@ -41,6 +41,7 @@ import os
 import hashlib
 import hmac
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify, abort, send_from_directory
@@ -1682,7 +1683,13 @@ def handle_line_event(event: dict):
                     log.exception(f"[admin cmd] error: {e}")
                     admin_reply = None
                 if admin_reply is not None:
-                    line_reply_text(reply_token, admin_reply["text"])
+                    msgs = [
+                        {"type": "image", "originalContentUrl": u, "previewImageUrl": u}
+                        for u in (admin_reply.get("images") or [])[:4]
+                    ]
+                    if admin_reply.get("text"):
+                        msgs.append({"type": "text", "text": admin_reply["text"]})
+                    line_reply(reply_token, msgs)
                     return
 
             # ผ่าน Q&A flow
@@ -1895,6 +1902,48 @@ def api_admin_cmd():
         log.exception(f"[api_admin_cmd] error: {e}")
         return jsonify({"error": str(e), "traceback": traceback.format_exc()[-800:]}), 500
     return jsonify({"reply": reply})
+
+
+_OPD_PICTURE_ROOT = Path(r"D:\DoctorDogs\Pictures")
+
+
+def _sign_picture_token(opd_picture_id: int, expires: int) -> str:
+    msg = f"{opd_picture_id}:{expires}".encode()
+    return hmac.new(INTERNAL_API_KEY.encode(), msg, hashlib.sha256).hexdigest()[:16]
+
+
+@app.route("/opd_image/<int:opd_picture_id>", methods=["GET"])
+def opd_image(opd_picture_id):
+    """เสิร์ฟรูปประกอบการรักษาให้ LINE ดึงไปแสดงในแชท — URL เซ็นด้วย HMAC+เวลาหมดอายุ
+    (สร้างจาก _make_picture_url ใน bot_admin_commands.py) กันคนเดา opd_picture_id
+    (เลขเรียงต่อกัน) ไล่ดูรูปคนไข้รายอื่นที่ไม่ใช่ของตัวเอง"""
+    try:
+        expires = int(request.args.get("t", "0"))
+    except ValueError:
+        abort(403)
+    sig = request.args.get("sig", "")
+    if time.time() > expires or not hmac.compare_digest(_sign_picture_token(opd_picture_id, expires), sig):
+        abort(403)
+
+    from flask import send_file
+    import opd_db
+    try:
+        with opd_db._connect() as conn:
+            row = conn.execute(
+                "SELECT picture_path FROM opd_pictures WHERE opd_picture_id = ?", (opd_picture_id,)
+            ).fetchone()
+    except Exception:
+        abort(404)
+    if not row or not row["picture_path"]:
+        abort(404)
+
+    rel = row["picture_path"].lstrip("/")
+    if rel.startswith("images/"):
+        rel = rel[len("images/"):]
+    file_path = _OPD_PICTURE_ROOT / rel
+    if not file_path.exists():
+        abort(404)
+    return send_file(file_path, mimetype="image/jpeg")
 
 
 # ──────────────────────────────────────────────

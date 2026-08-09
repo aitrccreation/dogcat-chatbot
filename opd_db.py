@@ -87,6 +87,16 @@ def get_pet_history(hn: str) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def get_opd_picture_ids(opd_id: int) -> list[int]:
+    """opd_picture_id ของรูปประกอบ visit หนึ่งๆ เรียงตามลำดับที่ถ่าย (ใช้สร้างลิงก์รูปทีหลัง)"""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT opd_picture_id FROM opd_pictures WHERE opd_id = ? ORDER BY opd_picture_id",
+            (opd_id,),
+        ).fetchall()
+        return [r["opd_picture_id"] for r in rows]
+
+
 def get_pet_profile(hn: str) -> dict | None:
     """โปรไฟล์สัตว์ 1 ตัวจาก HN — {hn, pet_name, pet_type, owner_name, phone}
     ใช้ตอนลงทะเบียนเพื่อเติมช่องที่ลูกค้าไม่ได้บอกมา

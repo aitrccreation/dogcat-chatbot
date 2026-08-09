@@ -15,11 +15,32 @@ handle_admin_command() ถูกเรียกเฉพาะตอน user_id 
 ใช้ opd_db.py (ชั้น query กลางเดียวกับ dashboard) — ข้อมูลจาก local SQLite (drx_opd.db)
 อ่านอย่างเดียว ไม่มีการเขียน/แก้ไขข้อมูลใดๆ
 """
+import hashlib
+import hmac
 import os
 import re
+import time
 from pathlib import Path
 
 _DB_FILE = Path(__file__).parent / "drx_opd.db"
+
+
+def _sign_picture_token(opd_picture_id: int, expires: int) -> str:
+    key = os.environ.get("INTERNAL_API_KEY", "dogcatlovely_internal_2026")
+    msg = f"{opd_picture_id}:{expires}".encode()
+    return hmac.new(key.encode(), msg, hashlib.sha256).hexdigest()[:16]
+
+
+def _make_picture_url(opd_picture_id: int) -> str | None:
+    """สร้างลิงก์รูปแบบ public ให้ LINE ดึงไปแสดงได้ (ผ่าน ngrok tunnel ของเครื่อง local เสมอ
+    ไม่ว่าจะรันจากเครื่องนี้เองหรือถูก proxy มาจาก Railway) เซ็น HMAC+เวลาหมดอายุ (24 ชม.)
+    กันคนอื่นเดา opd_picture_id (เลขเรียงต่อกัน) ไล่ดูรูปคนไข้รายอื่น"""
+    base = os.environ.get("LOCAL_API_URL", "").rstrip("/")
+    if not base:
+        return None
+    expires = int(time.time()) + 86400
+    sig = _sign_picture_token(opd_picture_id, expires)
+    return f"{base}/opd_image/{opd_picture_id}?t={expires}&sig={sig}"
 
 
 def _has_local_data() -> bool:
@@ -173,7 +194,17 @@ def _pet_history(query: str) -> dict:
             dx = v["dx"] or v["final_diagnosis"] or v["major_problem"] or "-"
             lines.append(f"🗓️ {date}\n   วินิจฉัย: {dx}\n   ยอด: {_fmt_money(v['total_amount'])}")
         lines.append(f"━━━━━━━━━━━━━━━━━\nรวม {len(history)} visit ทั้งหมด")
-        return {"text": "\n".join(lines)}
+
+        result = {"text": "\n".join(lines)}
+        # แนบรูปเฉพาะ visit ล่าสุดเท่านั้น (ไม่เอารูปทุก visit — ข้อความจะยาวเกินไป)
+        try:
+            pic_ids = opd_db.get_opd_picture_ids(latest["opd_id"])
+            images = [u for pid in pic_ids[:4] if (u := _make_picture_url(pid))]
+            if images:
+                result["images"] = images
+        except Exception:
+            pass
+        return result
     except Exception as e:
         return {"text": f"⚠️ ดึงข้อมูลไม่สำเร็จ: {e}"}
 
