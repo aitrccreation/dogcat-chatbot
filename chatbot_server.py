@@ -1904,6 +1904,17 @@ def api_admin_cmd():
     return jsonify({"reply": reply})
 
 
+@app.route("/api/last_line_error", methods=["GET"])
+def api_last_line_error():
+    """ชั่วคราว: ดู error ล่าสุดตอนยิง LINE reply API (ไว้ debug กรณี local/Railway proxy
+    สำเร็จหมดแต่ข้อความไม่ถึงผู้ใช้ — ต้องดูว่า LINE เองปฏิเสธ reply ด้วยเหตุผลอะไร)
+    Header: X-API-Key: <INTERNAL_API_KEY>"""
+    key = request.headers.get("X-API-Key", "")
+    if key != INTERNAL_API_KEY:
+        return jsonify({"error": "unauthorized"}), 403
+    return jsonify(_last_line_error)
+
+
 _OPD_PICTURE_ROOT = Path(r"D:\DoctorDogs\Pictures")
 
 
