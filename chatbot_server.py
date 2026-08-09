@@ -666,8 +666,6 @@ LINE_REPLY_URL = "https://api.line.me/v2/bot/message/reply"
 LINE_PUSH_URL  = "https://api.line.me/v2/bot/message/push"
 
 
-_last_line_error = {"status": None, "body": None, "payload": None}
-
 def line_reply(reply_token: str, messages: list):
     """ส่ง reply กลับไปยัง LINE"""
     headers = {
@@ -678,15 +676,6 @@ def line_reply(reply_token: str, messages: list):
     r = req.post(LINE_REPLY_URL, headers=headers, json=payload, timeout=10)
     if r.status_code != 200:
         log.warning(f"LINE reply failed: {r.status_code} {r.text[:500]}")
-        # เก็บ error ล่าสุดเพื่อ debug
-        _last_line_error["status"] = r.status_code
-        _last_line_error["body"] = r.text[:500]
-        # เก็บ payload (ตัด text/replyToken ออกเพื่อความปลอดภัย)
-        _last_line_error["payload"] = {
-            "msg_count": len(messages),
-            "msg_types": [m.get("type") for m in messages],
-            "image_urls": [m.get("originalContentUrl") for m in messages if m.get("type") == "image"],
-        }
 
 
 def line_reply_text(reply_token: str, text: str):
@@ -1902,17 +1891,6 @@ def api_admin_cmd():
         log.exception(f"[api_admin_cmd] error: {e}")
         return jsonify({"error": str(e), "traceback": traceback.format_exc()[-800:]}), 500
     return jsonify({"reply": reply})
-
-
-@app.route("/api/last_line_error", methods=["GET"])
-def api_last_line_error():
-    """ชั่วคราว: ดู error ล่าสุดตอนยิง LINE reply API (ไว้ debug กรณี local/Railway proxy
-    สำเร็จหมดแต่ข้อความไม่ถึงผู้ใช้ — ต้องดูว่า LINE เองปฏิเสธ reply ด้วยเหตุผลอะไร)
-    Header: X-API-Key: <INTERNAL_API_KEY>"""
-    key = request.headers.get("X-API-Key", "")
-    if key != INTERNAL_API_KEY:
-        return jsonify({"error": "unauthorized"}), 403
-    return jsonify(_last_line_error)
 
 
 _OPD_PICTURE_ROOT = Path(r"D:\DoctorDogs\Pictures")
