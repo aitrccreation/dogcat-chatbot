@@ -189,10 +189,21 @@ def _pet_history(query: str) -> dict:
             f"เจ้าของ: {latest['owner_name']}",
             "━━━━━━━━━━━━━━━━━",
         ]
-        for v in history[-5:][::-1]:
+        recent = history[-5:][::-1]
+        for i, v in enumerate(recent):
             date = (v["opd_datetime"] or "")[:16].replace("T", " ")
             dx = v["dx"] or v["final_diagnosis"] or v["major_problem"] or "-"
-            lines.append(f"🗓️ {date}\n   วินิจฉัย: {dx}\n   ยอด: {_fmt_money(v['total_amount'])}")
+            if i == 0:
+                # visit ล่าสุด — ขยายรายละเอียดการวินิจฉัยให้ครบกว่ารายการเก่า
+                cc = v["chief_complaint"] or "-"
+                tx = v["treatment"] or "-"
+                block = f"🗓️ {date} (ล่าสุด)\n   อาการที่มา: {cc}\n   วินิจฉัย: {dx}"
+                if v["final_diagnosis"] and v["final_diagnosis"] != dx:
+                    block += f"\n   วินิจฉัยสุดท้าย: {v['final_diagnosis']}"
+                block += f"\n   การรักษา: {tx}\n   ยอด: {_fmt_money(v['total_amount'])}"
+                lines.append(block)
+            else:
+                lines.append(f"🗓️ {date}\n   วินิจฉัย: {dx}\n   ยอด: {_fmt_money(v['total_amount'])}")
         lines.append(f"━━━━━━━━━━━━━━━━━\nรวม {len(history)} visit ทั้งหมด")
 
         result = {"text": "\n".join(lines)}
