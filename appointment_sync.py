@@ -603,6 +603,24 @@ def _hn_base(hn: str) -> str:
     return hn.split("-")[0] if hn and "-" in hn else hn
 
 
+_drx_raw_cache: tuple[float, dict] | None = None
+
+
+def _load_drx_raw() -> dict:
+    """โหลด _raw จาก drx_data.json แบบ cache ตาม mtime
+    ฟังก์ชันนี้ถูกเรียกทีละลูกค้า (500+ ครั้ง/รอบ) — ถ้า parse ไฟล์ 1.3MB ใหม่ทุกครั้ง
+    จะกินเวลาเป็นสิบนาทีจนงาน sync ชนเพดานเวลาของ Task Scheduler
+    """
+    global _drx_raw_cache
+    if not DRX_JSON.exists():
+        return {}
+    mtime = DRX_JSON.stat().st_mtime
+    if _drx_raw_cache is None or _drx_raw_cache[0] != mtime:
+        data = json.loads(DRX_JSON.read_text(encoding="utf-8"))
+        _drx_raw_cache = (mtime, data.get("_raw", {}) or {})
+    return _drx_raw_cache[1]
+
+
 def _find_sibling_hns_from_drx(hn_base: str) -> list[dict]:
     """ค้นหา HNs ทั้งหมดที่มี prefix เดียวกัน (เจ้าของเดียวกัน) ใน DRX data
     เช่น hn_base='690131' → [{'hn':'690131-1','pet_name':'นมสด',...},
@@ -611,8 +629,7 @@ def _find_sibling_hns_from_drx(hn_base: str) -> list[dict]:
     if not hn_base or not DRX_JSON.exists():
         return []
     try:
-        data = json.loads(DRX_JSON.read_text(encoding="utf-8"))
-        raw  = data.get("_raw", {}) or {}
+        raw = _load_drx_raw()
         found: dict[str, dict] = {}   # hn → info
 
         # จาก _raw.appointments
@@ -738,12 +755,38 @@ def backfill_customer_names():
         print(f"   [backfill] error: {e}")
 
 
-def verify_all_line_uids():
-    """ตรวจ LINE UID ของลูกค้าทุกรายว่ายังใช้งานได้อยู่ไหม
+VERIFY_UID_STATE = Path(__file__).parent / "last_verify_uid.txt"
+VERIFY_UID_EVERY_DAYS = 7
+
+
+def _verify_uid_due(force: bool = False) -> bool:
+    """เช็คว่าถึงรอบตรวจ UID หรือยัง — ยิง LINE API ทีละราย ใช้เวลา ~1 วิ/คน
+    ลูกค้า 500+ ราย = 10+ นาที ถ้ารันทุกรอบ sync (วันละ 2 ครั้ง) จะชนเพดานเวลา
+    ของ Task Scheduler ส่วนคนที่ block บอทก็ไม่ได้เพิ่มรายวัน → สัปดาห์ละครั้งพอ
+    """
+    if force:
+        return True
+    try:
+        last = VERIFY_UID_STATE.read_text(encoding="utf-8").strip()
+        days = (datetime.now() - datetime.strptime(last, "%Y-%m-%d")).days
+        if days < VERIFY_UID_EVERY_DAYS:
+            print(f"   [verify-uid] ข้าม — ตรวจไปเมื่อ {days} วันก่อน "
+                  f"(ครบรอบทุก {VERIFY_UID_EVERY_DAYS} วัน)")
+            return False
+    except Exception:
+        pass   # ไม่มีไฟล์ / อ่านไม่ได้ → ถือว่าถึงรอบ
+    return True
+
+
+def verify_all_line_uids(force: bool = False):
+    """ตรวจ LINE UID ของลูกค้าทุกรายว่ายังใช้งานได้อยู่ไหม (รันสัปดาห์ละครั้ง)
     - ถ้า block/ลบบัญชี → เพิ่ม 'LINE_BLOCKED' ใน note
     - ถ้า valid อีกครั้ง → ล้าง LINE_BLOCKED ออก
     - ถ้าไม่มี token หรือ network error → ข้าม (ไม่ตัดสิน)
+    force=True เพื่อสั่งตรวจทันทีโดยไม่สนรอบ
     """
+    if not _verify_uid_due(force):
+        return
     try:
         import os
         import appointment_db as adb
@@ -792,6 +835,8 @@ def verify_all_line_uids():
         if unblocked:   parts.append(f"unblocked {unblocked} ราย")
         if skip_err:    parts.append(f"ข้าม {skip_err} (network)")
         print(f"   [verify-uid] {'เสร็จ: ' + ', '.join(parts) if parts else 'ไม่มีการเปลี่ยนแปลง'}")
+
+        VERIFY_UID_STATE.write_text(datetime.now().strftime("%Y-%m-%d"), encoding="utf-8")
     except Exception as e:
         print(f"   [verify-uid] error: {e}")
 
