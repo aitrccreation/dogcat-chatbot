@@ -568,7 +568,7 @@ if __name__ == "__main__":
 
 
 # ───── preview ฝั่งคลินิก (ไม่ใช่เส้นทางของลูกค้า) ─────
-def get_pet_list_demo(limit: int = 6) -> list[dict]:
+def get_pet_list_demo(limit: int = 12) -> list[dict]:
     """สัตว์ที่มีประวัติเยอะสุด — ไว้ให้คลินิกดูหน้าตาสมุดประจำตัวก่อนเปิดใช้จริง
     เรียกได้เฉพาะ endpoint ที่ป้องกันด้วย INTERNAL_API_KEY เท่านั้น"""
     with _connect() as conn:

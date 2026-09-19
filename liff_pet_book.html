@@ -49,29 +49,6 @@ body{margin:0;background:var(--cream);color:var(--ink);
 .row .k{color:var(--muted)}
 .row .v{font-weight:500;text-align:right}
 
-.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
-.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 8px;text-align:center}
-.stat b{display:block;font-size:19px;font-weight:700;color:var(--teal-dark);line-height:1.3}
-.stat span{font-size:11px;color:var(--muted)}
-
-.visit{display:flex;gap:12px}
-.rail{display:flex;flex-direction:column;align-items:center;flex:none;padding-top:5px}
-.dot{width:10px;height:10px;border-radius:50%;background:#D5CEC4}
-.visit:first-child .dot{background:var(--teal);box-shadow:0 0 0 4px var(--teal-soft)}
-.line-v{width:2px;flex:1;background:#EFE9E1;margin-top:3px}
-.visit:last-child .line-v{display:none}
-.visit-body{flex:1;padding-bottom:16px;min-width:0}
-.visit-date{font-size:14px;font-weight:600}
-.badge-new{background:var(--teal);color:#fff;font-size:10px;font-weight:500;padding:1px 8px;border-radius:999px;margin-left:6px;vertical-align:2px}
-.badge-days{background:var(--peach);color:#8A4B12;font-size:10px;font-weight:500;padding:1px 8px;border-radius:999px;margin-left:6px;vertical-align:2px}
-.svc{margin:6px 0 0;padding:0;list-style:none}
-.svc li{font-size:13px;color:#42525A;padding-left:15px;position:relative;line-height:1.75}
-.svc li::before{content:"";position:absolute;left:0;top:10px;width:5px;height:5px;border-radius:50%;background:var(--orange)}
-.visit-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:13px}
-.amount{font-weight:600;color:var(--teal-dark)}
-.thumbs{display:flex;gap:6px;margin-top:9px;overflow-x:auto;padding-bottom:2px}
-.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line);flex:none}
-
 .vac{padding:12px 0;border-bottom:1px solid #F3EEE7}
 .vac:last-child{border-bottom:none}
 .vac-head{display:flex;align-items:center;gap:11px}
@@ -86,12 +63,6 @@ body{margin:0;background:var(--cream);color:var(--ink);
 .vac-main{flex:1;min-width:0}
 .vac-name{font-size:14px;font-weight:600;margin:0}
 .vac-sub{font-size:12px;color:var(--muted);margin:1px 0 0}
-.vac-right{text-align:right;flex:none}
-.vac-due{font-size:12px;color:var(--muted)}
-.pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px;margin-top:3px}
-.pill.ok{background:var(--ok-bg);color:var(--ok)}
-.pill.due_soon{background:var(--warn-bg);color:var(--warn)}
-.pill.overdue{background:var(--danger-bg);color:var(--danger)}
 
 .alert{display:flex;gap:11px;background:var(--peach);border-radius:16px;padding:13px 15px;margin-bottom:12px}
 .alert .ic{font-size:19px;flex:none}
@@ -103,7 +74,6 @@ body{margin:0;background:var(--cream);color:var(--ink);
 .appt b{display:block;font-size:12px;font-weight:500;opacity:.85}
 .appt .d{font-size:17px;font-weight:700;margin:1px 0 2px}
 .appt .r{font-size:12.5px;opacity:.9;line-height:1.55}
-.pill.in_series{background:var(--teal-soft);color:var(--teal)}
 .memorial{background:#F1EEF7;border-radius:16px;padding:13px 16px;margin-bottom:12px;
           font-size:13px;color:#4C4166;text-align:center;line-height:1.7}
 .cta{display:block;width:100%;background:var(--teal);color:#fff;border:none;border-radius:14px;
@@ -145,17 +115,11 @@ body{margin:0;background:var(--cream);color:var(--ink);
 
     <div class="tabs" role="tablist">
       <button class="tab" role="tab" aria-selected="true" data-tab="profile">ข้อมูลพื้นฐาน</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="visits">ประวัติการใช้บริการ</button>
-      <button class="tab" role="tab" aria-selected="false" data-tab="vaccine">วัคซีน</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="vaccine">สมุดวัคซีน</button>
     </div>
 
     <section id="panel-profile">
       <div class="card" id="profileRows"></div>
-    </section>
-
-    <section id="panel-visits" class="hide">
-      <div class="stats" id="visitStats"></div>
-      <div class="card" id="visitList"></div>
     </section>
 
     <section id="panel-vaccine" class="hide">
@@ -261,32 +225,6 @@ function renderProfile(d) {
     `<div class="row"><span class="k">${esc(k)}</span><span class="v">${esc(v || "-")}</span></div>`).join("");
 }
 
-function renderVisits(d) {
-  $("visitStats").innerHTML = [
-    ["มาทั้งหมด", d.stats.visit_count + " ครั้ง"],
-    ["ครั้งล่าสุด", d.stats.last_visit_th],
-  ].map(([s, b]) => `<div class="stat"><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join("");
-
-  if (!d.visits.length) {
-    $("visitList").innerHTML = '<div class="empty">ยังไม่มีประวัติการใช้บริการค่ะ</div>';
-    return;
-  }
-  $("visitList").innerHTML = d.visits.map((v, i) => `
-    <div class="visit">
-      <div class="rail"><div class="dot"></div><div class="line-v"></div></div>
-      <div class="visit-body">
-        <div class="visit-date">${esc(v.date_th)}${v.day_count > 1 ? '<span class="badge-days">' + v.day_count + ' วัน</span>' : ""}${i === 0 ? '<span class="badge-new">ล่าสุด</span>' : ""}</div>
-        <ul class="svc">${v.services.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
-        ${(v.photos && v.photos.length)
-          ? `<div class="thumbs">${v.photos.map(u => `<img src="${esc(u)}" alt="รูปการรักษา" loading="lazy">`).join("")}</div>` : ""}
-        <div class="visit-foot">
-          <span style="color:var(--muted)">${v.weight_kg ? "น้ำหนัก " + esc(v.weight_kg) + " กก." : ""}</span>
-          <span class="amount">${esc(v.total_th)} บาท</span>
-        </div>
-      </div>
-    </div>`).join("");
-}
-
 function renderVaccine(d) {
   const vacs = d.vaccines || [];
   const alerts = vacs.filter(v => v.status === "overdue" || v.status === "due_soon");
@@ -302,8 +240,6 @@ function renderVaccine(d) {
     $("vacList").innerHTML = '<div class="empty">ยังไม่มีประวัติวัคซีนในระบบค่ะ</div>';
     return;
   }
-  const pillText = { ok: "ยังไม่ถึงกำหนด", due_soon: "ใกล้ครบกำหนด", overdue: "เลยกำหนด",
-                     in_series: "อยู่ระหว่างชุดวัคซีน" };
   $("vacList").innerHTML = vacs.map(v => `
     <div class="vac">
       <div class="vac-head">
@@ -311,10 +247,6 @@ function renderVaccine(d) {
         <div class="vac-main">
           <p class="vac-name">${esc(v.label)}</p>
           <p class="vac-sub">ฉีดล่าสุด ${esc(v.last_date_th)} · รวม ${v.dose_count} เข็ม</p>
-        </div>
-        <div class="vac-right">
-          <div class="vac-due">${v.status === "in_series" ? "เข็มถัดไป" : "ครบกำหนด"} ${esc(v.next_due_th)}</div>
-          <span class="pill ${v.status}">${pillText[v.status]}</span>
         </div>
       </div>
       <ul class="dose-list">
@@ -349,7 +281,7 @@ function renderNextAppt(d) {
 
 function render(d) {
   DATA = d;
-  renderProfile(d); renderVisits(d); renderVaccine(d); renderNextAppt(d);
+  renderProfile(d); renderVaccine(d); renderNextAppt(d);
   $("footNote").textContent =
     "ระบบแสดงประวัติตั้งแต่ " + d.data_since_th + " ซึ่งเป็นวันที่โรงพยาบาลเริ่มใช้ระบบบันทึกนี้ " +
     "หากต้องการประวัติก่อนหน้านั้น กรุณาติดต่อเจ้าหน้าที่ 080-4288181";
@@ -359,7 +291,7 @@ function render(d) {
 
 document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
   document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", x === t));
-  ["profile", "visits", "vaccine"].forEach(k =>
+  ["profile", "vaccine"].forEach(k =>
     $("panel-" + k).classList.toggle("hide", k !== t.dataset.tab));
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
