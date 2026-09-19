@@ -1511,6 +1511,10 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     """
     sess = get_session(user_id)
 
+    # คลัง Q&A เก็บบริการนี้ไว้เป็น "อาบน้ำ-ตัดขน" (มีขีดกลาง) ลูกค้าที่พิมพ์ติดกัน
+    # หรือเว้นวรรคจะค้นไม่เจอแล้วบอทเงียบ — เติมขีดให้ก่อนเข้า flow ค้นหา
+    user_text = re.sub(r"อาบน้ำ[\s-]*ตัดขน", "อาบน้ำ-ตัดขน", user_text or "")
+
     # ── 0.4 Rich Menu ปุ่มขวา: "ติดต่อคลินิก" — ทำงานเสมอ (ก่อน cooldown) ──
     if _is_contact_clinic_trigger(user_text):
         return {"text": CONTACT_CLINIC_REPLY, "images": []}

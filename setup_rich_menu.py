@@ -33,8 +33,11 @@ LINE_TOKEN = os.environ.get(
     os.environ.get("LINE_TOKEN", "")
 ).strip()
 
-# Rich Menu: half-screen 2×2
-W, H = 2500, 843
+# Rich Menu: full-screen 2x2 (2500x1686 — ratio 1.483 ผ่านเกณฑ์ LINE ที่ >= 1.45)
+W, H = 2500, 1686
+
+# รูปเมนูที่คลินิกออกแบบเอง — ถ้ามีไฟล์นี้จะใช้แทนรูปที่สคริปต์วาด
+CUSTOM_IMAGE = Path(__file__).parent / "richmenu_image.jpg"
 CLINIC_PHONE = "080-4288181"
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -45,7 +48,8 @@ BUTTONS = [
     ("ลงทะเบียน",        "ลงทะเบียน",         "#059669", "#10B981", "bell"),
     ("สมุดประจำตัว",     "สมุดประจำตัว",      "#15656B", "#1E8A92", "book"),
     ("จองคิวทำหมัน",     "จองคิวทำหมัน",      "#7C3AED", "#8B5CF6", "scissors"),
-    ("จองคิวอาบน้ำตัดขน", "จองคิวอาบน้ำตัดขน", "#0891B2", "#06B6D4", "bath"),
+    # ข้อความที่ส่งต้องมีขีดกลาง ("อาบน้ำ-ตัดขน") ให้ตรงกับคลัง Q&A ไม่งั้นบอทค้นไม่เจอแล้วเงียบ
+    ("จองคิวอาบน้ำตัดขน", "จองคิวอาบน้ำ-ตัดขน", "#0891B2", "#06B6D4", "bath"),
 ]
 
 
@@ -228,6 +232,11 @@ ICON_FN = {
 #  Image (2×2 grid)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def make_rich_menu_image(save_path: str | None = None) -> bytes:
+    if CUSTOM_IMAGE.exists():
+        data = CUSTOM_IMAGE.read_bytes()
+        print(f"   ใช้รูปที่คลินิกออกแบบไว้ → {CUSTOM_IMAGE.name}  ({len(data):,} bytes)")
+        return data
+
     try:
         from PIL import Image, ImageDraw
     except ImportError:
@@ -337,7 +346,7 @@ def upload_image(menu_id: str, img_bytes: bytes):
     r = requests.post(
         f"https://api-data.line.me/v2/bot/richmenu/{menu_id}/content",
         headers={"Authorization": f"Bearer {LINE_TOKEN}",
-                 "Content-Type": "image/png"},
+                 "Content-Type": "image/jpeg" if img_bytes[:2] == bytes([0xFF, 0xD8]) else "image/png"},
         data=img_bytes, timeout=60,
     )
     if not r.ok:
@@ -393,28 +402,33 @@ def main():
     print("  Dog and Cat Lovely — Rich Menu 4 ปุ่ม")
     print("=" * 60)
 
-    # 1. ลบ menu เก่า
-    print("\nลบ menu เก่า...")
-    for m in list_rich_menus():
-        ok = delete_menu(m["richMenuId"])
-        print(f"  {'ok' if ok else 'fail'}  {m['richMenuId']}")
+    # ลำดับสำคัญ: สร้างเมนูใหม่ให้เสร็จก่อน แล้วค่อยลบของเก่า
+    # (ถ้าลบก่อนแล้วขั้นตอนถัดไปพลาด ลูกค้าจะไม่มีเมนูให้กดเลยจนกว่าจะรันซ้ำ)
+    old_menus = [m["richMenuId"] for m in list_rich_menus()]
+    print(f"\nเมนูเดิมที่มีอยู่ {len(old_menus)} รายการ (จะลบหลังตั้งเมนูใหม่สำเร็จ)")
 
-    # 2. สร้าง object
+    # 1. สร้าง object
     print("\nสร้าง Rich Menu object...")
     menu_id = create_rich_menu()
     print(f"  richMenuId = {menu_id}")
 
-    # 3. สร้างรูปและ upload
-    print("\nสร้าง image...")
+    # 2. เตรียมรูปและ upload
+    print("\nเตรียม image...")
     img = make_rich_menu_image()
     print("Upload image...")
     upload_image(menu_id, img)
     print("  image uploaded")
 
-    # 4. Set default
+    # 3. Set default — ตั้งแต่บรรทัดนี้ลูกค้าเห็นเมนูใหม่แล้ว
     print("\nSet default...")
     set_default(menu_id)
     print("  set as default for all users")
+
+    # 4. ลบเมนูเก่าทิ้ง (ทำหลังสุด ปลอดภัยแล้ว)
+    if old_menus:
+        print("\nลบเมนูเก่า...")
+        for mid in old_menus:
+            print(f"  {'ok' if delete_menu(mid) else 'fail'}  {mid}")
 
     print()
     print("=" * 60)
