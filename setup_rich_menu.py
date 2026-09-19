@@ -28,10 +28,21 @@ except ImportError:
 
 import requests
 
-LINE_TOKEN = os.environ.get(
-    "LOVELY_BOT_TOKEN",
-    os.environ.get("LINE_TOKEN", "")
-).strip()
+# ต้องเป็น token ของ OA ที่ลูกค้าทักจริง = "รพ.ส.หมาแมวเลิฟลี่" (@717ifvbo)
+# อย่าใช้ LOVELY_BOT_TOKEN — นั่นเป็น OA คนละตัว ("Lovely Bot" @200umkse)
+# เคยพลาดมาแล้ว: ตั้งเมนูเสร็จแต่ลูกค้าไม่เห็นอะไรเลยเพราะไปขึ้นผิด OA
+LINE_TOKEN = (os.environ.get("LINE_OA_TOKEN") or os.environ.get("LINE_TOKEN") or "").strip()
+EXPECTED_BASIC_ID = "@717ifvbo"
+
+
+def whoami() -> dict:
+    """ถาม LINE ว่า token นี้เป็นของ OA ไหน — กันตั้งเมนูผิดบัญชี"""
+    r = requests.get("https://api.line.me/v2/bot/info",
+                     headers={"Authorization": f"Bearer {LINE_TOKEN}"}, timeout=15)
+    if not r.ok:
+        print(f"❌ token ใช้ไม่ได้: {r.status_code} — {r.text[:200]}")
+        sys.exit(1)
+    return r.json()
 
 # Rich Menu: full-screen 2x2 (2500x1686 — ratio 1.483 ผ่านเกณฑ์ LINE ที่ >= 1.45)
 W, H = 2500, 1686
@@ -401,6 +412,13 @@ def main():
     print("=" * 60)
     print("  Dog and Cat Lovely — Rich Menu 4 ปุ่ม")
     print("=" * 60)
+
+    info = whoami()
+    print(f"  OA ปลายทาง: {info.get('displayName')}  {info.get('basicId')}")
+    if info.get("basicId") != EXPECTED_BASIC_ID:
+        print(f"  หยุดก่อน — คาดว่าจะเป็น {EXPECTED_BASIC_ID} แต่ token ชี้ไปที่ {info.get('basicId')}")
+        print("  ตรวจ LINE_OA_TOKEN / LINE_TOKEN ใน .env ก่อนรันใหม่")
+        sys.exit(1)
 
     # ลำดับสำคัญ: สร้างเมนูใหม่ให้เสร็จก่อน แล้วค่อยลบของเก่า
     # (ถ้าลบก่อนแล้วขั้นตอนถัดไปพลาด ลูกค้าจะไม่มีเมนูให้กดเลยจนกว่าจะรันซ้ำ)
