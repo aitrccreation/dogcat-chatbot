@@ -96,7 +96,9 @@ FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_202
 # Lovely Bot → แจ้งเตือน admin เมื่อบอทตอบไม่ได้
 LOVELY_BOT_TOKEN          = os.environ.get("LOVELY_BOT_TOKEN", "")
 ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "Ude09abe7b1f73ee901c047ccfe693dd8").strip()
-# Channel ID ของ LINE Login channel ที่ผูกกับ LIFF — ใช้ verify ID token ของสมุดประจำตัว
+# Channel ID ของ "LINE Login channel" ที่ LIFF อยู่ (ไม่ใช่ของ Messaging API channel)
+# ใช้ verify ID token ของสมุดประจำตัว — LINE ออก token ให้ channel ที่ LIFF สังกัดเท่านั้น
+# หมายเหตุ: ตั้งแต่ปี 2024 LINE ไม่ให้เพิ่ม LIFF app ใน Messaging API channel แล้ว
 LINE_CHANNEL_ID           = os.environ.get("LINE_CHANNEL_ID", "").strip()
 CLINIC_PHONE              = "080-4288181"    # สาขาราชวิถี (หลัก)
 CLINIC_PHONE2             = "090-1556446"   # สาขาหลังม.ศิลปากร
@@ -1967,6 +1969,57 @@ def _sign_picture_token(opd_picture_id: int, expires: int) -> str:
     return hmac.new(INTERNAL_API_KEY.encode(), msg, hashlib.sha256).hexdigest()[:16]
 
 
+def _sign_pet_picture_token(pet_uid: int, expires: int) -> str:
+    """แยก namespace จากรูป OPD (ขึ้นต้น 'pet:') เพื่อไม่ให้ token ของรูปหนึ่งใช้ข้ามไปอีกรูปได้"""
+    msg = f"pet:{pet_uid}:{expires}".encode()
+    return hmac.new(INTERNAL_API_KEY.encode(), msg, hashlib.sha256).hexdigest()[:16]
+
+
+def _serve_signed_picture(picture_path: str):
+    """คืนไฟล์รูปจากดิสก์ตาม path ที่ DRX บันทึกไว้ — กัน path traversal ด้วยการเช็คว่า
+    ไฟล์อยู่ใต้โฟลเดอร์รูปของ DRX จริง"""
+    from flask import send_file
+    rel = (picture_path or "").lstrip("/")
+    if rel.startswith("images/"):
+        rel = rel[len("images/"):]
+    file_path = (_OPD_PICTURE_ROOT / rel).resolve()
+    if not str(file_path).startswith(str(_OPD_PICTURE_ROOT.resolve())) or not file_path.exists():
+        abort(404)
+    return send_file(file_path, mimetype="image/jpeg")
+
+
+@app.route("/pet_image/<int:pet_uid>", methods=["GET"])
+def pet_image(pet_uid):
+    """รูปโปรไฟล์สัตว์สำหรับหน้าสมุดประจำตัว — เซ็น HMAC + หมดอายุ เหมือนรูปการรักษา"""
+    try:
+        expires = int(request.args.get("t", "0"))
+    except ValueError:
+        abort(403)
+    sig = request.args.get("sig", "")
+    if time.time() > expires or not hmac.compare_digest(_sign_pet_picture_token(pet_uid, expires), sig):
+        abort(403)
+
+    import customer_history as chx
+    try:
+        with chx._connect() as conn:
+            has_blob = any(c[1] == "blob" for c in conn.execute("PRAGMA table_info(pet_pictures)"))
+            cols = "picture_path, blob" if has_blob else "picture_path, NULL AS blob"
+            row = conn.execute(
+                f"SELECT {cols} FROM pet_pictures WHERE pet_uid = ?", (pet_uid,)
+            ).fetchone()
+    except Exception:
+        abort(404)
+    if not row:
+        abort(404)
+    # บน cloud รูปฝังมาใน snapshot เป็น BLOB (ไม่มีไฟล์บนดิสก์) — ที่เครื่องคลินิกอ่านจากไฟล์
+    if row["blob"]:
+        from flask import Response
+        return Response(row["blob"], mimetype="image/jpeg")
+    if not row["picture_path"]:
+        abort(404)
+    return _serve_signed_picture(row["picture_path"])
+
+
 @app.route("/opd_image/<int:opd_picture_id>", methods=["GET"])
 def opd_image(opd_picture_id):
     """เสิร์ฟรูปประกอบการรักษาให้ LINE ดึงไปแสดงในแชท — URL เซ็นด้วย HMAC+เวลาหมดอายุ
@@ -2055,6 +2108,36 @@ def liff_petbook():
     return app.response_class(html, mimetype="text/html")
 
 
+@app.route("/api/petbook_snapshot", methods=["POST"])
+def api_petbook_snapshot():
+    """รับไฟล์ snapshot สมุดประจำตัวจากเครื่องคลินิก (petbook_snapshot.py --upload)
+
+    เก็บไว้ให้ cloud เสิร์ฟสมุดได้แม้เครื่องคลินิกปิด — เขียนแบบ atomic (เขียนไฟล์ temp
+    แล้วค่อย replace) เพื่อไม่ให้มีจังหวะที่ลูกค้าเปิดเจอไฟล์ครึ่งๆ กลางๆ
+    Header: X-API-Key: <INTERNAL_API_KEY>
+    """
+    if request.headers.get("X-API-Key", "") != INTERNAL_API_KEY:
+        return jsonify({"ok": False, "error": "unauthorized"}), 403
+
+    data = request.get_data()
+    if len(data) < 1024 or not data.startswith(b"SQLite format 3\x00"):
+        return jsonify({"ok": False, "error": "ไฟล์ไม่ใช่ SQLite database"}), 400
+
+    import customer_history as chx
+    target = chx.CLOUD_DB_PATH
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+    except OSError as e:
+        log.exception(f"[petbook] เขียน snapshot ไม่สำเร็จ: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    log.info(f"[petbook] รับ snapshot ใหม่ {len(data):,} bytes → {target}")
+    return jsonify({"ok": True, "bytes": len(data), "path": str(target)})
+
+
 @app.route("/api/petbook_pets", methods=["POST"])
 def api_petbook_pets():
     """รายชื่อสัตว์ทุกตัวที่ LINE นี้ลงทะเบียนไว้ (ไว้ให้สลับตัวเมื่อมีหลายตัว)"""
@@ -2084,10 +2167,12 @@ def api_petbook():
         if uid == "__demo__":
             pets = chx.get_pet_list_demo()
             hn = hn or (pets[0]["hn"] if pets else "")
-            data = chx.build_history_unchecked(hn, photo_url_fn=_petbook_photo_url)
+            data = chx.build_history_unchecked(hn, photo_url_fn=_petbook_photo_url,
+                                               pet_photo_url_fn=_petbook_pet_photo_url)
             data["pets"] = pets
             return jsonify(data)
-        data = chx.build_history(uid, hn, photo_url_fn=_petbook_photo_url)
+        data = chx.build_history(uid, hn, photo_url_fn=_petbook_photo_url,
+                                     pet_photo_url_fn=_petbook_pet_photo_url)
         return jsonify(data)
     except Exception as e:
         log.exception(f"[petbook] build error: {e}")
@@ -2095,10 +2180,20 @@ def api_petbook():
 
 
 def _petbook_photo_url(opd_picture_id: int) -> str:
-    """ลิงก์รูปเซ็น HMAC + หมดอายุ 24 ชม. (เส้นทางเดียวกับที่แอดมินใช้)"""
+    """ลิงก์รูปเซ็น HMAC + หมดอายุ 24 ชม. (เส้นทางเดียวกับที่แอดมินใช้)
+
+    ใช้ path แบบสัมพัทธ์ — หน้าสมุดถูกเสิร์ฟจากที่ไหน รูปก็มาจากที่นั่น
+    (เสิร์ฟจาก Railway ตอนเครื่องคลินิกปิด / จากเครื่องคลินิกตอนเปิด) ไม่ต้องพึ่ง PUBLIC_BASE_URL
+    """
     expires = int(time.time()) + 86400
     sig = _sign_picture_token(opd_picture_id, expires)
-    return f"{PUBLIC_BASE_URL}/opd_image/{opd_picture_id}?t={expires}&sig={sig}"
+    return f"/opd_image/{opd_picture_id}?t={expires}&sig={sig}"
+
+
+def _petbook_pet_photo_url(pet_uid: int) -> str:
+    expires = int(time.time()) + 86400
+    sig = _sign_pet_picture_token(pet_uid, expires)
+    return f"/pet_image/{pet_uid}?t={expires}&sig={sig}"
 
 
 # ──────────────────────────────────────────────

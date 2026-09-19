@@ -2,6 +2,7 @@
 email_sender.py
 .env
 *.env
+.env.bak*
 google_creds*.json
 *_creds.json
 *.pem
@@ -94,3 +95,6 @@ residual_km.txt
 Thumbs.db
 Desktop.ini
 last_verify_uid.txt
+petbook_cloud.db
+petbook_cloud.db-shm
+petbook_cloud.db-wal

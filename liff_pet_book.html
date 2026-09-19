@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>สมุดประจำตัว | Dog and Cat Lovely</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --teal:#15656B; --teal-dark:#0E4A4F; --teal-soft:#E4F0F0;
+  --peach:#FDEBDD; --orange:#E8823C; --cream:#FBF7F2;
+  --ink:#1F2A2E; --muted:#6B7B80; --line:#E9E2D9;
+  --ok:#2F8F5B; --ok-bg:#E6F4EB; --warn:#C2760E; --warn-bg:#FCF0DC; --danger:#C0392B; --danger-bg:#FBEAE8;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--cream);color:var(--ink);
+     font-family:'Noto Sans Thai',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     font-size:15px;line-height:1.65;padding-bottom:32px}
+.wrap{max-width:460px;margin:0 auto;padding:0 14px}
+.topbar{display:flex;align-items:center;gap:10px;padding:14px 0 10px}
+.logo{width:34px;height:34px;border-radius:10px;background:var(--teal);color:#fff;
+      display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
+.brand{font-weight:700;font-size:15px;color:var(--teal-dark);line-height:1.2}
+.brand small{display:block;font-weight:400;font-size:11px;color:var(--muted)}
+
+.card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px}
+.pet-head{display:flex;gap:14px;align-items:center}
+.avatar{width:66px;height:66px;border-radius:50%;background:var(--peach);flex:none;overflow:hidden;
+        display:flex;align-items:center;justify-content:center}
+.avatar img{width:100%;height:100%;object-fit:cover}
+.avatar svg{width:100%;height:100%;display:block}
+.pet-name{font-size:21px;font-weight:700;margin:0;display:flex;align-items:center;gap:6px}
+.sex{font-size:14px;color:var(--orange)}
+.pet-sub{margin:2px 0 0;font-size:13px;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{background:var(--teal-soft);color:var(--teal-dark);font-size:12px;font-weight:500;
+      padding:4px 11px;border-radius:999px}
+
+.tabs{display:flex;gap:4px;background:#fff;border:1px solid var(--line);border-radius:14px;
+      padding:4px;margin-bottom:12px;position:sticky;top:0;z-index:5}
+.tab{flex:1;text-align:center;padding:9px 4px;font-size:13px;font-weight:500;color:var(--muted);
+     border-radius:10px;cursor:pointer;border:none;background:none;font-family:inherit}
+.tab[aria-selected="true"]{background:var(--teal);color:#fff}
+
+.row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #F3EEE7;font-size:14px}
+.row:last-child{border-bottom:none}
+.row .k{color:var(--muted)}
+.row .v{font-weight:500;text-align:right}
+
+.stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:12px}
+.stat{background:#fff;border:1px solid var(--line);border-radius:14px;padding:11px 8px;text-align:center}
+.stat b{display:block;font-size:19px;font-weight:700;color:var(--teal-dark);line-height:1.3}
+.stat span{font-size:11px;color:var(--muted)}
+
+.visit{display:flex;gap:12px}
+.rail{display:flex;flex-direction:column;align-items:center;flex:none;padding-top:5px}
+.dot{width:10px;height:10px;border-radius:50%;background:#D5CEC4}
+.visit:first-child .dot{background:var(--teal);box-shadow:0 0 0 4px var(--teal-soft)}
+.line-v{width:2px;flex:1;background:#EFE9E1;margin-top:3px}
+.visit:last-child .line-v{display:none}
+.visit-body{flex:1;padding-bottom:16px;min-width:0}
+.visit-date{font-size:14px;font-weight:600}
+.badge-new{background:var(--teal);color:#fff;font-size:10px;font-weight:500;padding:1px 8px;border-radius:999px;margin-left:6px;vertical-align:2px}
+.badge-days{background:var(--peach);color:#8A4B12;font-size:10px;font-weight:500;padding:1px 8px;border-radius:999px;margin-left:6px;vertical-align:2px}
+.svc{margin:6px 0 0;padding:0;list-style:none}
+.svc li{font-size:13px;color:#42525A;padding-left:15px;position:relative;line-height:1.75}
+.svc li::before{content:"";position:absolute;left:0;top:10px;width:5px;height:5px;border-radius:50%;background:var(--orange)}
+.visit-foot{display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:13px}
+.amount{font-weight:600;color:var(--teal-dark)}
+.thumbs{display:flex;gap:6px;margin-top:9px;overflow-x:auto;padding-bottom:2px}
+.thumbs img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line);flex:none}
+
+.vac{padding:12px 0;border-bottom:1px solid #F3EEE7}
+.vac:last-child{border-bottom:none}
+.vac-head{display:flex;align-items:center;gap:11px}
+.dose-list{list-style:none;margin:10px 0 0;padding:9px 0 0 45px;border-top:1px dashed #EFE9E1}
+.dose-list li{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.85;margin-bottom:3px}
+.dose-no{flex:none;width:19px;height:19px;border-radius:50%;background:var(--teal-soft);color:var(--teal);
+         font-size:10px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;margin-top:2px}
+.dose-date{flex:none;color:var(--ink);font-weight:500;min-width:88px}
+.dose-name{color:var(--muted);min-width:0;overflow-wrap:anywhere}
+.vac-ic{width:34px;height:34px;border-radius:10px;background:var(--teal-soft);color:var(--teal);
+        display:flex;align-items:center;justify-content:center;font-size:17px;flex:none}
+.vac-main{flex:1;min-width:0}
+.vac-name{font-size:14px;font-weight:600;margin:0}
+.vac-sub{font-size:12px;color:var(--muted);margin:1px 0 0}
+.vac-right{text-align:right;flex:none}
+.vac-due{font-size:12px;color:var(--muted)}
+.pill{display:inline-block;font-size:11px;font-weight:500;padding:2px 9px;border-radius:999px;margin-top:3px}
+.pill.ok{background:var(--ok-bg);color:var(--ok)}
+.pill.due_soon{background:var(--warn-bg);color:var(--warn)}
+.pill.overdue{background:var(--danger-bg);color:var(--danger)}
+
+.alert{display:flex;gap:11px;background:var(--peach);border-radius:16px;padding:13px 15px;margin-bottom:12px}
+.alert .ic{font-size:19px;flex:none}
+.alert b{display:block;font-size:13px;color:#8A4B12}
+.alert span{font-size:12.5px;color:#9A6234}
+
+.appt{display:flex;gap:12px;background:var(--teal);color:#fff;border-radius:18px;padding:15px 16px;margin-bottom:12px}
+.appt .ic{font-size:21px;flex:none;line-height:1.3}
+.appt b{display:block;font-size:12px;font-weight:500;opacity:.85}
+.appt .d{font-size:17px;font-weight:700;margin:1px 0 2px}
+.appt .r{font-size:12.5px;opacity:.9;line-height:1.55}
+.pill.in_series{background:var(--teal-soft);color:var(--teal)}
+.memorial{background:#F1EEF7;border-radius:16px;padding:13px 16px;margin-bottom:12px;
+          font-size:13px;color:#4C4166;text-align:center;line-height:1.7}
+.cta{display:block;width:100%;background:var(--teal);color:#fff;border:none;border-radius:14px;
+     padding:14px;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer;margin-top:4px}
+.note{font-size:11.5px;color:var(--muted);text-align:center;margin:14px 0 0;line-height:1.6}
+.empty{text-align:center;color:var(--muted);font-size:14px;padding:28px 10px}
+.hide{display:none}
+.switcher{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;margin-bottom:10px}
+.switcher button{white-space:nowrap;background:#fff;border:1px solid var(--line);border-radius:999px;
+      padding:6px 14px;font-size:13px;font-family:inherit;color:var(--muted);cursor:pointer}
+.switcher button[aria-pressed="true"]{background:var(--teal-dark);border-color:var(--teal-dark);color:#fff;font-weight:500}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="logo">DC</div>
+    <div class="brand">สมุดประจำตัว<small>Dog and Cat Lovely Pet Hospital</small></div>
+  </div>
+
+  <div id="loading" class="empty">กำลังโหลดข้อมูล…</div>
+  <div id="error" class="empty hide"></div>
+
+  <div id="app" class="hide">
+    <div id="switcher" class="switcher hide"></div>
+
+    <div class="card">
+      <div class="pet-head">
+        <div class="avatar" id="petIcon">🐾</div>
+        <div style="min-width:0">
+          <p class="pet-name"><span id="petName">-</span><span class="sex" id="petSex"></span></p>
+          <p class="pet-sub" id="petSub">-</p>
+          <div class="chips" id="petChips"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="nextAppt"></div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="profile">ข้อมูลพื้นฐาน</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="visits">ประวัติการใช้บริการ</button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="vaccine">วัคซีน</button>
+    </div>
+
+    <section id="panel-profile">
+      <div class="card" id="profileRows"></div>
+    </section>
+
+    <section id="panel-visits" class="hide">
+      <div class="stats" id="visitStats"></div>
+      <div class="card" id="visitList"></div>
+    </section>
+
+    <section id="panel-vaccine" class="hide">
+      <div id="vacAlert"></div>
+      <div class="card" id="vacList"></div>
+    </section>
+
+    <button class="cta" id="bookBtn">จองคิวเข้ารับบริการ</button>
+    <p class="note" id="footNote"></p>
+  </div>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+const LIFF_ID = window.LIFF_ID || "";
+const params = new URLSearchParams(location.search);
+let DATA = null, PETS = [], currentHn = params.get("hn") || "";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const petIcon = t => t === "cat" ? "🐱" : t === "dog" ? "🐶" : "🐾";
+
+const PET_ART = {
+  dog: `<svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">
+      <ellipse cx="13" cy="26" rx="7.5" ry="13" fill="#B9793F" transform="rotate(-14 13 26)"/>
+      <ellipse cx="51" cy="26" rx="7.5" ry="13" fill="#B9793F" transform="rotate(14 51 26)"/>
+      <ellipse cx="32" cy="31" rx="18" ry="16.5" fill="#D9A063"/>
+      <ellipse cx="32" cy="40" rx="11" ry="8.5" fill="#F3DCBE"/>
+      <circle cx="25" cy="28" r="2.5" fill="#3A2A1C"/><circle cx="39" cy="28" r="2.5" fill="#3A2A1C"/>
+      <ellipse cx="32" cy="36" rx="3.4" ry="2.5" fill="#3A2A1C"/>
+      <path d="M32 38.5v3M32 41.5q-3.6 2.8-6.4 0M32 41.5q3.6 2.8 6.4 0" stroke="#3A2A1C"
+            stroke-width="1.6" fill="none" stroke-linecap="round"/>
+    </svg>`,
+  cat: `<svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">
+      <path d="M15 24 17 8l12 7z" fill="#E09A5A"/><path d="M49 24 47 8l-12 7z" fill="#E09A5A"/>
+      <path d="M18 21 19.5 12l7.5 4.5z" fill="#F6D2AE"/><path d="M46 21 44.5 12l-7.5 4.5z" fill="#F6D2AE"/>
+      <ellipse cx="32" cy="33" rx="18" ry="16" fill="#E8A968"/>
+      <ellipse cx="25" cy="31" rx="2.3" ry="3" fill="#3A2A1C"/><ellipse cx="39" cy="31" rx="2.3" ry="3" fill="#3A2A1C"/>
+      <path d="M29 38h6l-3 2.6z" fill="#C4614F"/>
+      <path d="M32 41v2.4M32 43.4q-3.4 2.6-6 0M32 43.4q3.4 2.6 6 0" stroke="#3A2A1C"
+            stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      <path d="M13 34h7M13 39h7M51 34h-7M51 39h-7" stroke="#B9793F" stroke-width="1.3" stroke-linecap="round"/>
+    </svg>`,
+  other: `<svg viewBox="0 0 64 64" width="100%" height="100%" aria-hidden="true">
+      <ellipse cx="32" cy="41" rx="11" ry="9" fill="#D9A063"/>
+      <ellipse cx="17" cy="27" rx="5.5" ry="7.5" fill="#D9A063"/><ellipse cx="47" cy="27" rx="5.5" ry="7.5" fill="#D9A063"/>
+      <ellipse cx="26" cy="17" rx="5" ry="7" fill="#D9A063"/><ellipse cx="38" cy="17" rx="5" ry="7" fill="#D9A063"/>
+    </svg>`,
+};
+const petArt = t => PET_ART[t] || PET_ART.other;
+const sexMark = s => s === "male" ? "♂" : s === "female" ? "♀" : "";
+
+function fail(msg) {
+  $("loading").classList.add("hide");
+  $("error").classList.remove("hide");
+  $("error").textContent = msg;
+}
+
+async function api(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function renderSwitcher() {
+  const box = $("switcher");
+  if (PETS.length < 2) { box.classList.add("hide"); return; }
+  box.classList.remove("hide");
+  box.innerHTML = PETS.map(p =>
+    `<button data-hn="${esc(p.hn)}" aria-pressed="${p.hn === currentHn}">${petIcon(p.pettype)} ${esc(p.petname)}</button>`
+  ).join("");
+  box.querySelectorAll("button").forEach(b =>
+    b.onclick = () => { currentHn = b.dataset.hn; load(); });
+}
+
+function renderProfile(d) {
+  const p = d.pet;
+  $("petIcon").innerHTML = p.photo_url
+    ? `<img src="${esc(p.photo_url)}" alt="รูป${esc(p.petname || "น้อง")}" onerror="this.parentNode.innerHTML=petArt('${esc(p.pettype || "other")}')">`
+    : petArt(p.pettype);
+  $("petName").textContent = p.petname || "-";
+  $("petSex").textContent = sexMark(p.petsex);
+  $("petSub").textContent = [p.pet_type_th, p.petbreed].filter(Boolean).join(" · ");
+  const chips = [];
+  if (p.age_text) chips.push(p.age_text);
+  if (p.weight_kg) chips.push(p.weight_kg + " กก.");
+  chips.push("HN " + p.hn);
+  $("petChips").innerHTML = chips.map(c => `<span class="chip">${esc(c)}</span>`).join("");
+
+  const rows = [
+    ["ชื่อ", p.petname], ["ชนิด", p.pet_type_th], ["สายพันธุ์", p.petbreed],
+    ["เพศ", p.pet_sex_th], ["อายุ", p.age_text || "ไม่ระบุวันเกิด"],
+    ["วันเกิด", p.petbirthday], ["น้ำหนักล่าสุด", p.weight_kg ? p.weight_kg + " กก." : "-"],
+    ["HN", p.hn], ["มาใช้บริการครั้งแรก", d.stats.first_visit_th],
+    ["มาครั้งล่าสุด", d.stats.last_visit_th],
+  ];
+  $("profileRows").innerHTML = rows.map(([k, v]) =>
+    `<div class="row"><span class="k">${esc(k)}</span><span class="v">${esc(v || "-")}</span></div>`).join("");
+}
+
+function renderVisits(d) {
+  $("visitStats").innerHTML = [
+    ["มาทั้งหมด", d.stats.visit_count + " ครั้ง"],
+    ["ครั้งล่าสุด", d.stats.last_visit_th],
+  ].map(([s, b]) => `<div class="stat"><b>${esc(b)}</b><span>${esc(s)}</span></div>`).join("");
+
+  if (!d.visits.length) {
+    $("visitList").innerHTML = '<div class="empty">ยังไม่มีประวัติการใช้บริการค่ะ</div>';
+    return;
+  }
+  $("visitList").innerHTML = d.visits.map((v, i) => `
+    <div class="visit">
+      <div class="rail"><div class="dot"></div><div class="line-v"></div></div>
+      <div class="visit-body">
+        <div class="visit-date">${esc(v.date_th)}${v.day_count > 1 ? '<span class="badge-days">' + v.day_count + ' วัน</span>' : ""}${i === 0 ? '<span class="badge-new">ล่าสุด</span>' : ""}</div>
+        <ul class="svc">${v.services.map(s => `<li>${esc(s)}</li>`).join("")}</ul>
+        ${(v.photos && v.photos.length)
+          ? `<div class="thumbs">${v.photos.map(u => `<img src="${esc(u)}" alt="รูปการรักษา" loading="lazy">`).join("")}</div>` : ""}
+        <div class="visit-foot">
+          <span style="color:var(--muted)">${v.weight_kg ? "น้ำหนัก " + esc(v.weight_kg) + " กก." : ""}</span>
+          <span class="amount">${esc(v.total_th)} บาท</span>
+        </div>
+      </div>
+    </div>`).join("");
+}
+
+function renderVaccine(d) {
+  const vacs = d.vaccines || [];
+  const alerts = vacs.filter(v => v.status === "overdue" || v.status === "due_soon");
+  $("vacAlert").innerHTML = alerts.length ? alerts.map(v => `
+    <div class="alert"><span class="ic">🔔</span><div>
+      <b>${v.status === "overdue" ? "วัคซีนเลยกำหนดแล้ว" : "วัคซีนใกล้ครบกำหนด"}</b>
+      <span>${esc(v.label)} — ${v.status === "overdue"
+        ? "เลยกำหนด " + Math.abs(v.days_left) + " วัน"
+        : "ครบกำหนดในอีก " + v.days_left + " วัน"} (${esc(v.next_due_th)})</span>
+    </div></div>`).join("") : "";
+
+  if (!vacs.length) {
+    $("vacList").innerHTML = '<div class="empty">ยังไม่มีประวัติวัคซีนในระบบค่ะ</div>';
+    return;
+  }
+  const pillText = { ok: "ยังไม่ถึงกำหนด", due_soon: "ใกล้ครบกำหนด", overdue: "เลยกำหนด",
+                     in_series: "อยู่ระหว่างชุดวัคซีน" };
+  $("vacList").innerHTML = vacs.map(v => `
+    <div class="vac">
+      <div class="vac-head">
+        <div class="vac-ic">💉</div>
+        <div class="vac-main">
+          <p class="vac-name">${esc(v.label)}</p>
+          <p class="vac-sub">ฉีดล่าสุด ${esc(v.last_date_th)} · รวม ${v.dose_count} เข็ม</p>
+        </div>
+        <div class="vac-right">
+          <div class="vac-due">${v.status === "in_series" ? "เข็มถัดไป" : "ครบกำหนด"} ${esc(v.next_due_th)}</div>
+          <span class="pill ${v.status}">${pillText[v.status]}</span>
+        </div>
+      </div>
+      <ul class="dose-list">
+        ${(v.doses || []).map((dose, i) => `
+          <li>
+            <span class="dose-no">${v.doses.length - i}</span>
+            <span class="dose-date">${esc(dose.date_th)}</span>
+            <span class="dose-name">${esc(dose.name)}${dose.qty > 1 ? " ×" + Math.round(dose.qty) : ""}</span>
+          </li>`).join("")}
+      </ul>
+    </div>`).join("");
+}
+
+function renderNextAppt(d) {
+  const a = d.next_appointment;
+  if (d.is_memorial) {
+    $("nextAppt").innerHTML =
+      '<div class="memorial">สมุดเล่มนี้เก็บความทรงจำของน้องไว้นะคะ<br>' +
+      'ขอบคุณที่ให้เราได้ร่วมดูแลน้องค่ะ 🤍</div>';
+    $("bookBtn").classList.add("hide");
+    return;
+  }
+  if (!a) { $("nextAppt").innerHTML = ""; return; }
+  const when = a.days_left === 0 ? "วันนี้" : (a.days_left === 1 ? "พรุ่งนี้" : "อีก " + a.days_left + " วัน");
+  $("nextAppt").innerHTML = `
+    <div class="appt"><span class="ic">📅</span><div>
+      <b>นัดครั้งถัดไป · ${esc(when)}</b>
+      <div class="d">${esc(a.date_th)}</div>
+      <div class="r">${esc(a.reasons.length ? a.reasons.join(" · ") : "ตามที่สัตวแพทย์นัด")}${a.note ? " · " + esc(a.note) : ""}</div>
+    </div></div>`;
+}
+
+function render(d) {
+  DATA = d;
+  renderProfile(d); renderVisits(d); renderVaccine(d); renderNextAppt(d);
+  $("footNote").textContent =
+    "ระบบแสดงประวัติตั้งแต่ " + d.data_since_th + " ซึ่งเป็นวันที่โรงพยาบาลเริ่มใช้ระบบบันทึกนี้ " +
+    "หากต้องการประวัติก่อนหน้านั้น กรุณาติดต่อเจ้าหน้าที่ 080-4288181";
+  $("loading").classList.add("hide");
+  $("app").classList.remove("hide");
+}
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.setAttribute("aria-selected", x === t));
+  ["profile", "visits", "vaccine"].forEach(k =>
+    $("panel-" + k).classList.toggle("hide", k !== t.dataset.tab));
+  window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+$("bookBtn").onclick = () => {
+  // sendMessages ต้องมี scope chat_message.write และเปิดจากหน้าแชท — ถ้าไม่ได้ ให้พาไปห้องแชท OA แทน
+  const openChat = () => { location.href = "https://line.me/R/ti/p/@dogcatlovely"; };
+  if (window.liff && liff.isInClient && liff.isInClient()) {
+    try {
+      liff.sendMessages([{ type: "text", text: "จองคิว" }])
+        .then(() => liff.closeWindow())
+        .catch(openChat);
+    } catch (e) { openChat(); }
+  } else {
+    openChat();
+  }
+};
+
+let ID_TOKEN = "";
+async function load() {
+  try {
+    const d = await api("/api/petbook", { id_token: ID_TOKEN, hn: currentHn, demo: params.get("demo") || "" });
+    if (!d.ok) return fail(d.message || "ดึงข้อมูลไม่สำเร็จค่ะ");
+    currentHn = d.hn;
+    renderSwitcher();
+    render(d);
+  } catch (e) {
+    fail("เชื่อมต่อระบบไม่ได้ในขณะนี้ค่ะ กรุณาลองใหม่อีกครั้ง หรือติดต่อ 080-4288181");
+  }
+}
+
+async function start() {
+  if (params.get("demo")) {
+    const d = await api("/api/petbook", { demo: params.get("demo"), hn: currentHn });
+    PETS = d.pets || []; if (!currentHn && d.hn) currentHn = d.hn;
+    if (!d.ok) return fail(d.message || "โหลดตัวอย่างไม่สำเร็จ");
+    renderSwitcher(); render(d);
+    return;
+  }
+  if (!LIFF_ID) return fail("ยังไม่ได้ตั้งค่า LIFF ID ค่ะ");
+  try {
+    await liff.init({ liffId: LIFF_ID });
+    if (!liff.isLoggedIn()) return liff.login({ redirectUri: location.href });
+    ID_TOKEN = liff.getIDToken() || "";
+    const list = await api("/api/petbook_pets", { id_token: ID_TOKEN });
+    if (!list.ok) return fail(list.message || "ไม่พบทะเบียนของคุณค่ะ");
+    PETS = list.pets || [];
+    if (!PETS.length) return fail("ยังไม่พบ HN ที่ลงทะเบียนไว้ค่ะ — กรุณากดปุ่ม \"ลงทะเบียน\" ในเมนูก่อนนะคะ");
+    if (!currentHn) currentHn = PETS[0].hn;
+    await load();
+  } catch (e) {
+    fail("เปิดสมุดประจำตัวไม่สำเร็จค่ะ กรุณาลองใหม่อีกครั้ง");
+  }
+}
+start();
+</script>
+</body>
+</html>

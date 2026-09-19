@@ -25,7 +25,7 @@ sync ครั้งแรก (ยังไม่มี watermark ใน sync_me
 """
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from drx_db import fetch_all
@@ -146,6 +146,28 @@ CREATE TABLE IF NOT EXISTS opd_pictures (
     opd_id          INTEGER,
     picture_path    TEXT
 );
+-- รายการบริการ/ยา ต่อ visit — ต้นทางของ "ประวัติการใช้บริการ" ที่ลูกค้าเห็นใน LINE OA
+-- (ฟิลด์วินิจฉัยใน opd ถูกกรอกน้อยมาก ~3% ตารางนี้จึงเป็นเนื้อหาหลักของประวัติฝั่งลูกค้า)
+CREATE TABLE IF NOT EXISTS opd_items (
+    payment_id    INTEGER PRIMARY KEY,
+    opd_id        INTEGER,
+    item_name     TEXT,
+    stock_type_id INTEGER,
+    category_name TEXT,
+    qty           REAL,
+    net_price     REAL
+);
+-- ตารางแปลรหัส come_for ในนัดหมาย → ข้อความไทย (103 = วัคซีนพิษสุนัขบ้า ฯลฯ)
+-- ใช้บอกลูกค้าว่า "นัดครั้งหน้ามาทำอะไร" ซึ่งแม่นกว่าการเดาจากประวัติ
+-- รูปโปรไฟล์สัตว์ (มีแค่ส่วนน้อยที่ถ่ายไว้) — เก็บแค่ path ไฟล์อยู่บนดิสก์เครื่องคลินิก
+CREATE TABLE IF NOT EXISTS pet_pictures (
+    pet_uid       INTEGER PRIMARY KEY,
+    picture_path  TEXT
+);
+CREATE TABLE IF NOT EXISTS come_for_list (
+    id      INTEGER PRIMARY KEY,
+    name    TEXT
+);
 CREATE TABLE IF NOT EXISTS sync_meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE INDEX IF NOT EXISTS idx_opd_pet_uid ON opd(pet_uid);
 CREATE INDEX IF NOT EXISTS idx_opd_datetime ON opd(opd_datetime);
@@ -155,6 +177,8 @@ CREATE INDEX IF NOT EXISTS idx_bill_daily_date ON bill_daily(bill_date);
 CREATE INDEX IF NOT EXISTS idx_stock_alert ON stock_items(alert_qty);
 CREATE INDEX IF NOT EXISTS idx_appt_datetime ON appointments(appointment_datetime);
 CREATE INDEX IF NOT EXISTS idx_opd_pictures_opd_id ON opd_pictures(opd_id);
+CREATE INDEX IF NOT EXISTS idx_opd_items_opd_id ON opd_items(opd_id);
+CREATE INDEX IF NOT EXISTS idx_opd_items_name ON opd_items(item_name);
 
 CREATE VIEW IF NOT EXISTS opd_full AS
 SELECT
@@ -232,13 +256,50 @@ def _full_name(row: dict) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+_THAI_MONTH_NAMES = {
+    "มกราคม": 1, "กุมภาพันธ์": 2, "มีนาคม": 3, "เมษายน": 4, "พฤษภาคม": 5, "มิถุนายน": 6,
+    "กรกฎาคม": 7, "สิงหาคม": 8, "กันยายน": 9, "ตุลาคม": 10, "พฤศจิกายน": 11, "ธันวาคม": 12,
+}
+
+
+def parse_thai_date(text: str):
+    """'3 มีนาคม 2568' → date(2025, 3, 3) — คืน None ถ้าเป็น 'ไม่ระบุ'/ว่าง/รูปแบบแปลก"""
+    parts = (text or "").strip().split()
+    if len(parts) != 3 or parts[1] not in _THAI_MONTH_NAMES:
+        return None
+    try:
+        day, year = int(parts[0]), int(parts[2])
+    except ValueError:
+        return None
+    if year > 2400:      # พ.ศ. → ค.ศ.
+        year -= 543
+    try:
+        return date(year, _THAI_MONTH_NAMES[parts[1]], day)
+    except ValueError:
+        return None
+
+
 def _age_text(row: dict) -> str:
-    y, m, d = row.get("petageyear"), row.get("petagemonth"), row.get("petageday")
+    """อายุคำนวณจาก petbirthday เท่านั้น
+
+    petageyear/petagemonth/petageday ในฐาน DRX ใช้ไม่ได้ — ทุกตัวเป็นค่าเดียวกันหมด
+    (3 ปี 2 เดือน 1 วัน ทั้ง 1,173 ตัว) เพราะไม่เคยถูกอัปเดตหลังลงทะเบียน
+    """
+    born = parse_thai_date(row.get("petbirthday"))
+    if not born:
+        return ""
+    today = date.today()
+    months = (today.year - born.year) * 12 + (today.month - born.month)
+    if today.day < born.day:
+        months -= 1
+    if months < 0:
+        return ""
+    if months < 1:
+        return f"{(today - born).days} วัน"
+    y, m = divmod(months, 12)
     bits = []
     if y: bits.append(f"{y} ปี")
     if m: bits.append(f"{m} เดือน")
-    if not bits and d:
-        bits.append(f"{d} วัน")
     return " ".join(bits)
 
 
@@ -304,6 +365,23 @@ def _sync_customers_pets_stock(conn: sqlite3.Connection, log) -> tuple[int, int,
         WHERE s.stock_status = 1
     """)
 
+    pet_pics = fetch_all(
+        "SELECT pet_uid, picture_path FROM petprofile_picture "
+        "WHERE picture_path IS NOT NULL AND picture_path <> ''"
+    )
+    conn.execute("DELETE FROM pet_pictures")
+    conn.executemany(
+        "INSERT OR REPLACE INTO pet_pictures (pet_uid, picture_path) VALUES (?,?)",
+        [(pp["pet_uid"], pp["picture_path"]) for pp in pet_pics],
+    )
+
+    come_for = fetch_all("SELECT id, name FROM queue_appointmet_come_for_list")
+    conn.execute("DELETE FROM come_for_list")
+    conn.executemany(
+        "INSERT INTO come_for_list (id, name) VALUES (?,?)",
+        [(c["id"], c["name"]) for c in come_for],
+    )
+
     conn.execute("DELETE FROM customers")
     conn.executemany(
         "INSERT INTO customers (uid, customerid, full_name, tel, address, province) VALUES (?,?,?,?,?,?)",
@@ -341,6 +419,27 @@ def _recompute_payments_for(conn: sqlite3.Connection, opd_ids: list[int]) -> int
     conn.executemany(
         "INSERT OR REPLACE INTO opd_payment_summary (opd_id, item_count, total_amount) VALUES (?,?,?)",
         [(ps["opd_id"], ps["item_count"], float(ps["total_amount"] or 0)) for ps in fresh_summary],
+    )
+
+    # รายการบริการรายชิ้น — replace เฉพาะ opd_id ที่แตะ (บิลถูกแก้ย้อนหลังได้ จึงลบก่อนใส่ใหม่)
+    fresh_items = fetch_all(
+        f"""SELECT opi.payment_id, opi.opd_id, opi.payment_name, opi.stock_type_id,
+                   st.typename AS category_name, opi.payment_amount, opi.payment_total_net_price
+            FROM opd_payment_item opi
+            LEFT JOIN stock_type st ON st.id = opi.stock_type_id
+            WHERE opi.opd_id IN ({placeholders})""",
+        tuple(opd_ids),
+    )
+    sqlite_ph = ",".join(["?"] * len(opd_ids))
+    conn.execute(f"DELETE FROM opd_items WHERE opd_id IN ({sqlite_ph})", opd_ids)
+    conn.executemany(
+        "INSERT OR REPLACE INTO opd_items "
+        "(payment_id, opd_id, item_name, stock_type_id, category_name, qty, net_price) VALUES (?,?,?,?,?,?,?)",
+        [(
+            it["payment_id"], it["opd_id"], (it["payment_name"] or "").strip(),
+            it["stock_type_id"], it["category_name"] or "ไม่ระบุหมวด",
+            float(it["payment_amount"] or 0), float(it["payment_total_net_price"] or 0),
+        ) for it in fresh_items],
     )
 
     date_rows = fetch_all(f"SELECT DISTINCT DATE(opd_datetime) AS d FROM opd WHERE opd_id IN ({placeholders})", tuple(opd_ids))
@@ -428,6 +527,7 @@ def _full_sync(conn: sqlite3.Connection, log) -> dict:
         default=EPOCH,
     )
 
+    conn.execute("DELETE FROM opd_items")
     conn.execute("DELETE FROM opd_payment_summary")
     conn.execute("DELETE FROM category_daily")
     all_opd_ids = [o["opd_id"] for o in opd_rows]

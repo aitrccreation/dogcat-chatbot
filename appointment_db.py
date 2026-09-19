@@ -69,6 +69,29 @@ def find_customer_by_user_id(line_user_id: str) -> dict | None:
 MAX_USERS_PER_HN = 2   # สูงสุด 2 LINE accounts ต่อ 1 HN
 
 
+def find_hns_by_user_id(line_user_id: str) -> list[dict]:
+    """คืนทุก HN ที่ LINE UID นี้ลงทะเบียนไว้ (เจ้าของมีหลายตัวได้ — 1 row ต่อคู่ uid+hn)
+    ต่างจาก find_customer_by_user_id() ที่คืนแค่ row แรก"""
+    if not line_user_id:
+        return []
+    with _lock:
+        wb = _load()
+        ws = wb["Customers"]
+        headers = [c.value for c in ws[1]]
+        rows = [
+            dict(zip(headers, row))
+            for row in ws.iter_rows(min_row=2, values_only=True)
+            if row[0] == line_user_id and row[1]
+        ]
+    seen, uniq = set(), []
+    for r in rows:
+        hn = str(r.get("hn") or "").strip()
+        if hn and hn not in seen:
+            seen.add(hn)
+            uniq.append(r)
+    return uniq
+
+
 def find_customer_by_hn(hn: str) -> dict | None:
     """คืน customer แรกที่พบ (backward compat)"""
     result = find_customers_by_hn(hn)

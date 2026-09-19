@@ -42,10 +42,10 @@ CLINIC_PHONE = "080-4288181"
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 BUTTONS = [
     # (label, send_text, bg_color, lighter_border, icon_key)
-    ("ลงทะเบียนรับนัด", "ลงทะเบียน",  "#059669", "#10B981", "bell"),
-    ("จองคิว",          "จองคิว",      "#2563EB", "#3B82F6", "calendar"),
-    ("ทำหมัน",          "ทำหมัน",      "#7C3AED", "#8B5CF6", "scissors"),
-    ("วัคซีน",          "วัคซีน",      "#0891B2", "#06B6D4", "syringe"),
+    ("ลงทะเบียน",        "ลงทะเบียน",         "#059669", "#10B981", "bell"),
+    ("สมุดประจำตัว",     "สมุดประจำตัว",      "#15656B", "#1E8A92", "book"),
+    ("จองคิวทำหมัน",     "จองคิวทำหมัน",      "#7C3AED", "#8B5CF6", "scissors"),
+    ("จองคิวอาบน้ำตัดขน", "จองคิวอาบน้ำตัดขน", "#0891B2", "#06B6D4", "bath"),
 ]
 
 
@@ -171,11 +171,56 @@ def _icon_syringe(draw, cx, cy, size=100, c="#FFFFFF", lw=12):
         draw.line([tx, by0, tx, by0+lw*3], fill=c, width=max(lw-2,3))
 
 
+def _icon_book(draw, cx, cy, size=100, c="#FFFFFF", lw=12):
+    """สมุดปกแข็ง มีสันซ้าย + รอยเท้าบนปก — สื่อถึงสมุดประจำตัวสัตว์เลี้ยง"""
+    r = size // 2
+    x0, y0 = cx - int(r*0.86), cy - int(r*0.92)
+    x1, y1 = cx + int(r*0.86), cy + int(r*0.92)
+    try:
+        draw.rounded_rectangle([x0, y0, x1, y1], radius=lw + 4, outline=c, width=lw)
+    except AttributeError:
+        draw.rectangle([x0, y0, x1, y1], outline=c, width=lw)
+
+    # สันสมุดด้านซ้าย (แถบทึบ)
+    spine = x0 + int((x1 - x0) * 0.22)
+    draw.rectangle([x0 + lw//2, y0 + lw//2, spine, y1 - lw//2], fill=c)
+
+    # รอยเท้าบนปก — ฝ่าเท้า + นิ้ว 3 นิ้ว
+    px = spine + int((x1 - spine) * 0.52)
+    py = cy + int(r*0.20)
+    pad_w, pad_h = int(r*0.46), int(r*0.38)
+    draw.ellipse([px - pad_w//2, py - pad_h//2, px + pad_w//2, py + pad_h//2], fill=c)
+    tr = max(int(r*0.13), 4)
+    ty = py - pad_h//2 - tr - 3
+    for dx, dy in ((-int(r*0.28), 4), (0, -3), (int(r*0.28), 4)):
+        draw.ellipse([px + dx - tr, ty + dy - tr, px + dx + tr, ty + dy + tr], fill=c)
+
+
+def _icon_bath(draw, cx, cy, size=100, c="#FFFFFF", lw=12):
+    """ฝักบัว + ละอองน้ำ — สื่อถึงอาบน้ำตัดขน"""
+    r = size // 2
+    head_w = int(r*1.25)
+    hy = cy - int(r*0.55)
+    draw.line([cx + head_w//2, hy - lw, cx + head_w//2, hy - r + 6], fill=c, width=max(lw - 4, 5))
+    draw.line([cx + head_w//2, hy - r + 6, cx - int(r*0.15), hy - r + 6], fill=c, width=max(lw - 4, 5))
+    try:
+        draw.rounded_rectangle([cx - head_w//2, hy, cx + head_w//2, hy + lw*2], radius=lw, fill=c)
+    except AttributeError:
+        draw.rectangle([cx - head_w//2, hy, cx + head_w//2, hy + lw*2], fill=c)
+    dr = max(lw//2 - 1, 3)
+    for i, dx in enumerate((-head_w//3, 0, head_w//3)):
+        for j in range(2):
+            dy = hy + lw*4 + j*int(r*0.42) + (i % 2) * int(r*0.16)
+            draw.ellipse([cx + dx - dr, dy - dr, cx + dx + dr, dy + dr], fill=c)
+
+
 ICON_FN = {
     "bell":     _icon_bell,
     "calendar": _icon_calendar,
     "scissors": _icon_scissors,
     "syringe":  _icon_syringe,
+    "book":     _icon_book,
+    "bath":     _icon_bath,
 }
 
 
