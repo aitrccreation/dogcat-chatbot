@@ -37,9 +37,7 @@ LINE_TOKEN = os.environ.get(
     os.environ.get("LINE_TOKEN", "")
 ).strip()
 
-# Admin notification → Wirote — ใช้ LOVELY_BOT_TOKEN (Wirote เป็นเพื่อน Lovely Bot, ไม่ใช่ LINE OA)
-ADMIN_TOKEN = os.environ.get("LOVELY_BOT_TOKEN", "").strip() or LINE_TOKEN
-
+# Admin notification → Wirote ส่งผ่าน admin_bot (สลับบอทสำรองได้เมื่อโควตาเต็ม)
 ADMIN_LINE_ID = os.environ.get("LINE_TARGET_ID", "Ude09abe7b1f73ee901c047ccfe693dd8").strip()
 
 THAI_MONTHS = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
@@ -296,18 +294,9 @@ def notify_admin_presend(ws, today: date) -> None:
 
     text = "\n".join(lines)
     try:
-        r = requests.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization": f"Bearer {ADMIN_TOKEN}",
-                     "Content-Type": "application/json"},
-            json={"to": ADMIN_LINE_ID,
-                  "messages": [{"type": "text", "text": text[:4900]}]},
-            timeout=15,
-        )
-        if r.status_code == 200:
+        import admin_bot
+        if admin_bot.send_admin_text(text):
             print(f"  📋 Summary → Wirote: ส่ง {len(will_send)} | NoLine T+2 {len(no_line_t2)} | โทร {len(no_line_call)}")
-        else:
-            print(f"  [presend-notify] HTTP {r.status_code}: {r.text[:200]}")
     except Exception as e:
         print(f"  [presend-notify] error: {e}")
 

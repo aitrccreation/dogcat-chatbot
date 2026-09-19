@@ -96,6 +96,8 @@ FB_VERIFY_TOKEN           = os.environ.get("FB_VERIFY", "dogcatlovely_verify_202
 # Lovely Bot → แจ้งเตือน admin เมื่อบอทตอบไม่ได้
 LOVELY_BOT_TOKEN          = os.environ.get("LOVELY_BOT_TOKEN", "")
 ADMIN_LINE_ID             = os.environ.get("LINE_TARGET_ID", "Ude09abe7b1f73ee901c047ccfe693dd8").strip()
+# Channel ID ของ LINE Login channel ที่ผูกกับ LIFF — ใช้ verify ID token ของสมุดประจำตัว
+LINE_CHANNEL_ID           = os.environ.get("LINE_CHANNEL_ID", "").strip()
 CLINIC_PHONE              = "080-4288181"    # สาขาราชวิถี (หลัก)
 CLINIC_PHONE2             = "090-1556446"   # สาขาหลังม.ศิลปากร
 CLINIC_LINE_OA            = "@dogcatlovely" # LINE OA
@@ -749,6 +751,12 @@ def line_reply_with_images(reply_token: str, reply: dict):
     """ส่ง LINE: รูป (image messages) + ข้อความ (text message) ในครั้งเดียว
     LINE จำกัด 5 messages ต่อ reply"""
     msgs = []
+    if reply.get("flex"):
+        msgs.append({
+            "type": "flex",
+            "altText": reply.get("alt_text", "Dog and Cat Lovely"),
+            "contents": reply["flex"],
+        })
     for img_url in reply.get("images", [])[:4]:  # max 4 รูป เพื่อให้เหลือ slot ให้ text
         msgs.append({
             "type": "image",
@@ -770,10 +778,6 @@ def line_reply_with_images(reply_token: str, reply: dict):
 # ──────────────────────────────────────────────
 def _notify_admin_appt(action: str, hn: str, pet: str, date: str, user_id: str):
     """แจ้ง admin ทาง LINE เมื่อลูกค้ายืนยัน/เลื่อนนัด"""
-    admin_id = ADMIN_LINE_ID
-    token    = LOVELY_BOT_TOKEN or LINE_CHANNEL_ACCESS_TOKEN
-    if not admin_id or not token:
-        return
     emoji  = "✅" if action == "confirm" else "⚠️"
     action_th = "ยืนยันนัด" if action == "confirm" else "ขอเลื่อนนัด"
     msg = (
@@ -785,12 +789,8 @@ def _notify_admin_appt(action: str, hn: str, pet: str, date: str, user_id: str):
         f"👤 LINE ID: {user_id[:16]}..."
     )
     try:
-        req.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"to": admin_id, "messages": [{"type": "text", "text": msg}]},
-            timeout=5,
-        )
+        import admin_bot
+        admin_bot.send_admin_text(msg)
     except Exception as e:
         log.warning(f"[admin notify] failed: {e}")
 
@@ -1435,6 +1435,66 @@ def handle_register_flow(sess: dict, user_id: str, user_text: str):
     return None
 
 
+PETBOOK_TRIGGERS = ("สมุดประจำตัว", "สมุดสุขภาพ", "ประวัติของน้อง", "ประวัติการรักษา", "ดูประวัติ")
+
+
+def _petbook_url(hn: str = "") -> str:
+    """ลิงก์เปิดสมุดประจำตัว — ใช้ liff.line.me ถ้าตั้ง LIFF แล้ว (เปิดในแอป LINE เลย)
+    ถ้ายังไม่ได้ตั้ง ใช้ URL เว็บปกติผ่าน ngrok เป็น fallback"""
+    q = f"?hn={hn}" if hn else ""
+    if LIFF_ID:
+        return f"https://liff.line.me/{LIFF_ID}{q}"
+    return f"{PUBLIC_BASE_URL}/liff/petbook{q}"
+
+
+def build_petbook_flex(pets: list[dict]) -> dict:
+    """การ์ดเปิดสมุดประจำตัว — 1 ปุ่มต่อสัตว์ 1 ตัว (สูงสุด 4 ตัว กันการ์ดยาวเกิน)"""
+    buttons = [{
+        "type": "button", "style": "primary", "height": "sm",
+        "color": "#15656B",
+        "action": {"type": "uri", "label": (p.get("petname") or p["hn"])[:20],
+                   "uri": _petbook_url(p["hn"])},
+    } for p in pets[:4]]
+    return {
+        "type": "bubble",
+        "body": {
+            "type": "box", "layout": "vertical", "spacing": "md", "contents": [
+                {"type": "text", "text": "สมุดประจำตัว", "weight": "bold", "size": "xl", "color": "#0E4A4F"},
+                {"type": "text", "text": "ดูประวัติการใช้บริการ วัคซีน และวันนัดของน้องได้ที่นี่ค่ะ",
+                 "size": "sm", "color": "#6B7B80", "wrap": True},
+                {"type": "separator", "margin": "md"},
+                {"type": "box", "layout": "vertical", "spacing": "sm", "margin": "md", "contents": buttons},
+            ],
+        },
+    }
+
+
+def handle_petbook_trigger(user_id: str, user_text: str):
+    """ลูกค้ากด "สมุดประจำตัว" → ส่งการ์ดพร้อมปุ่มเปิดสมุดของน้องแต่ละตัว
+    คืน None ถ้าข้อความไม่ใช่ trigger (ให้ flow อื่นทำงานต่อ)"""
+    text = (user_text or "").strip()
+    if not any(t in text for t in PETBOOK_TRIGGERS):
+        return None
+
+    try:
+        import customer_history as chx
+        pets = chx.get_pet_list(user_id)
+    except Exception as e:
+        log.warning(f"[petbook] get_pet_list failed: {e}")
+        pets = []
+
+    if not pets:
+        return {"text": (
+            "📖 สมุดประจำตัว\n"
+            "━━━━━━━━━━━━━━━━━\n\n"
+            "ยังไม่พบเลข HN ที่ผูกกับ LINE นี้ค่ะ\n"
+            "กรุณากดปุ่ม \"ลงทะเบียน\" ในเมนูด้านล่าง "
+            "แล้วส่งเลข HN ของน้องมาก่อนนะคะ 🐾"
+        ), "images": []}
+
+    return {"flex": build_petbook_flex(pets), "alt_text": "สมุดประจำตัวของน้อง"}
+
+
 def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     """
     Main Q&A flow handler — return dict {text, images} หรือ None ถ้าไม่ตอบ
@@ -1452,6 +1512,12 @@ def handle_qa_flow(user_id: str, user_text: str, platform: str = "line"):
     # ── 0.4 Rich Menu ปุ่มขวา: "ติดต่อคลินิก" — ทำงานเสมอ (ก่อน cooldown) ──
     if _is_contact_clinic_trigger(user_text):
         return {"text": CONTACT_CLINIC_REPLY, "images": []}
+
+    # ── 0.45 Rich Menu ปุ่ม "สมุดประจำตัว" — เปิดประวัติของตัวเอง ──
+    #    เป็น action ที่ลูกค้าตั้งใจกด ต้องตอบเสมอ (เหมือนการลงทะเบียน) ไม่ติด cooldown
+    petbook_reply = handle_petbook_trigger(user_id, user_text)
+    if petbook_reply is not None:
+        return petbook_reply
 
     # ── 0.5 Registration flow (HN ↔ LINE userId) — ต้องอยู่ "ก่อน" handoff cooldown! ──
     #    บั๊กเดิม: cooldown เช็คก่อน → ลูกค้าที่เคยส่งข้อความไม่ตรง (Claude ปิด → เข้า
@@ -1936,6 +2002,106 @@ def opd_image(opd_picture_id):
 
 
 # ──────────────────────────────────────────────
+#  LIFF: สมุดประจำตัว (ลูกค้าดูประวัติของตัวเอง)
+# ──────────────────────────────────────────────
+LIFF_ID = os.environ.get("LIFF_ID", "").strip()
+_PETBOOK_FILE = Path(__file__).parent / "liff_pet_book.html"
+
+
+def _verify_liff_token(id_token: str) -> str | None:
+    """ตรวจ ID token ที่หน้า LIFF ส่งมากับ LINE แล้วคืน userId จริง
+
+    สำคัญ: ห้ามเชื่อ userId ที่ client ส่งมาตรงๆ เพราะปลอมได้ — ต้องให้ LINE ยืนยัน
+    ว่า token นี้ออกให้ channel ของเราจริง แล้วอ่าน sub (= userId) จากผลลัพธ์เท่านั้น
+    """
+    if not id_token or not LINE_CHANNEL_ID:
+        return None
+    try:
+        r = req.post(
+            "https://api.line.me/oauth2/v2.1/verify",
+            data={"id_token": id_token, "client_id": LINE_CHANNEL_ID},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            log.warning(f"[petbook] verify token failed {r.status_code}: {r.text[:200]}")
+            return None
+        return (r.json() or {}).get("sub")
+    except Exception as e:
+        log.warning(f"[petbook] verify token error: {e}")
+        return None
+
+
+def _petbook_user(payload: dict) -> tuple[str | None, object]:
+    """คืน (line_user_id, error_response) — demo mode ต้องมี INTERNAL_API_KEY ถึงจะผ่าน"""
+    demo = (payload.get("demo") or "").strip()
+    if demo:
+        if demo != INTERNAL_API_KEY:
+            return None, (jsonify({"ok": False, "message": "unauthorized"}), 403)
+        return "__demo__", None
+    uid = _verify_liff_token(payload.get("id_token") or "")
+    if not uid:
+        return None, (jsonify({"ok": False, "message": "กรุณาเปิดหน้านี้จากแอป LINE ค่ะ"}), 401)
+    return uid, None
+
+
+@app.route("/liff/petbook", methods=["GET"])
+def liff_petbook():
+    """หน้าสมุดประจำตัว — ฝัง LIFF ID ให้หน้าเว็บตอน serve (ไม่ hardcode ในไฟล์)"""
+    if not _PETBOOK_FILE.exists():
+        abort(404)
+    html = _PETBOOK_FILE.read_text(encoding="utf-8")
+    inject = "<script>window.LIFF_ID=" + json.dumps(LIFF_ID) + ";</script>"
+    html = html.replace("<head>", "<head>" + inject, 1)
+    return app.response_class(html, mimetype="text/html")
+
+
+@app.route("/api/petbook_pets", methods=["POST"])
+def api_petbook_pets():
+    """รายชื่อสัตว์ทุกตัวที่ LINE นี้ลงทะเบียนไว้ (ไว้ให้สลับตัวเมื่อมีหลายตัว)"""
+    payload = request.json or {}
+    uid, err = _petbook_user(payload)
+    if err:
+        return err
+    try:
+        import customer_history as chx
+        pets = chx.get_pet_list(uid) if uid != "__demo__" else chx.get_pet_list_demo()
+        return jsonify({"ok": True, "pets": pets})
+    except Exception as e:
+        log.exception(f"[petbook] pets error: {e}")
+        return jsonify({"ok": False, "message": "ดึงข้อมูลไม่สำเร็จค่ะ"}), 500
+
+
+@app.route("/api/petbook", methods=["POST"])
+def api_petbook():
+    """ข้อมูลสมุดประจำตัวของ HN เดียว — เช็คสิทธิ์ใน customer_history.build_history()"""
+    payload = request.json or {}
+    uid, err = _petbook_user(payload)
+    if err:
+        return err
+    hn = (payload.get("hn") or "").strip()
+    try:
+        import customer_history as chx
+        if uid == "__demo__":
+            pets = chx.get_pet_list_demo()
+            hn = hn or (pets[0]["hn"] if pets else "")
+            data = chx.build_history_unchecked(hn, photo_url_fn=_petbook_photo_url)
+            data["pets"] = pets
+            return jsonify(data)
+        data = chx.build_history(uid, hn, photo_url_fn=_petbook_photo_url)
+        return jsonify(data)
+    except Exception as e:
+        log.exception(f"[petbook] build error: {e}")
+        return jsonify({"ok": False, "message": "ดึงข้อมูลไม่สำเร็จค่ะ"}), 500
+
+
+def _petbook_photo_url(opd_picture_id: int) -> str:
+    """ลิงก์รูปเซ็น HMAC + หมดอายุ 24 ชม. (เส้นทางเดียวกับที่แอดมินใช้)"""
+    expires = int(time.time()) + 86400
+    sig = _sign_picture_token(opd_picture_id, expires)
+    return f"{PUBLIC_BASE_URL}/opd_image/{opd_picture_id}?t={expires}&sig={sig}"
+
+
+# ──────────────────────────────────────────────
 #  START SCHEDULER (Daily Summary)
 #  รันเฉพาะบนเครื่อง Local PC เท่านั้น
 #  Railway ไม่รัน scheduler (ป้องกันส่ง LINE ซ้ำ 2 ครั้ง)
@@ -2137,9 +2303,6 @@ def api_run_job(job: str):
 
 def _notify_reschedule_with_phone(hn: str, pet: str, date: str, qid: int):
     """ส่งสรุปขอเลื่อนนัดให้ Wirote — รวมชื่อเจ้าของ + เบอร์โทรจาก opd_db (รันบน local เท่านั้น)"""
-    token = LOVELY_BOT_TOKEN or LINE_CHANNEL_ACCESS_TOKEN
-    if not token or not ADMIN_LINE_ID:
-        return
     owner = ""
     phone = ""
     try:
@@ -2166,13 +2329,9 @@ def _notify_reschedule_with_phone(hn: str, pet: str, date: str, qid: int):
         f"📞 เบอร์: {phone or 'ไม่มีข้อมูล'}"
     )
     try:
-        req.post(
-            "https://api.line.me/v2/bot/message/push",
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            json={"to": ADMIN_LINE_ID, "messages": [{"type": "text", "text": msg}]},
-            timeout=10,
-        )
-        log.info(f"[reschedule notify] sent to admin for HN={hn}")
+        import admin_bot
+        if admin_bot.send_admin_text(msg):
+            log.info(f"[reschedule notify] sent to admin for HN={hn}")
     except Exception as e:
         log.warning(f"[reschedule notify] push failed: {e}")
 

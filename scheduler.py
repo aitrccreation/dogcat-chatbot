@@ -102,19 +102,20 @@ def run_daily_summary():
         if not ok:
             log.warning("[Scheduler] DRX fetch failed — ใช้ข้อมูลเก่า")
 
-        # 2. สร้างและส่งข้อความ
+        # 2. สร้างและส่งข้อความ — ผ่าน admin_bot เพื่อให้สลับบอทสำรองได้ถ้าโควตาเต็ม
         import line_sender
+        import admin_bot
         data = line_sender.load_data()
         msg  = line_sender.build_message(data)
         log.info(f"[Scheduler] Built message ({len(msg)} chars), sending to LINE...")
-        ok_main = line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, msg)
+        ok_main = admin_bot.send_admin_text(msg)
 
         # 3. ส่ง stock message แยก — เฉพาะรอบ 20:xx (20:20)
         ok_stock = True
         if now.hour == 20:
             stock_msg = line_sender.build_stock_message(data)
             log.info(f"[Scheduler] Stock message ({len(stock_msg)} chars), sending...")
-            ok_stock = line_sender.send_line_push(LOVELY_BOT_TOKEN, LINE_TARGET_ID, stock_msg)
+            ok_stock = admin_bot.send_admin_text(stock_msg)
 
         if ok_main and ok_stock:
             log.info("[Scheduler] Daily summary sent successfully")
