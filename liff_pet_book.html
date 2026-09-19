@@ -49,7 +49,8 @@ body{margin:0;background:var(--cream);color:var(--ink);
 
 .row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--hair);font-size:14px}
 .row:last-child{border-bottom:none}
-.row .k{color:var(--muted)}
+.row .k{color:var(--muted);display:flex;align-items:center;gap:8px}
+.row .ic{display:inline-block;width:20px;text-align:center;font-size:14px;flex:none;line-height:1}
 .row .v{font-weight:500;text-align:right}
 
 .vac{padding:12px 0;border-bottom:1px solid var(--hair)}
@@ -219,14 +220,20 @@ function renderProfile(d) {
   $("petChips").innerHTML = chips.map(c => `<span class="chip">${esc(c)}</span>`).join("");
 
   const rows = [
-    ["ชื่อ", p.petname], ["ชนิด", p.pet_type_th], ["สายพันธุ์", p.petbreed],
-    ["เพศ", p.pet_sex_th], ["อายุ", p.age_text || "ไม่ระบุวันเกิด"],
-    ["วันเกิด", p.petbirthday], ["น้ำหนักล่าสุด", p.weight_kg ? p.weight_kg + " กก." : "-"],
-    ["HN", p.hn], ["มาใช้บริการครั้งแรก", d.stats.first_visit_th],
-    ["มาครั้งล่าสุด", d.stats.last_visit_th],
+    ["🏷️", "ชื่อ", p.petname],
+    ["🐾", "ชนิด", p.pet_type_th],
+    ["🧬", "สายพันธุ์", p.petbreed],
+    [sexMark(p.petsex) || "•", "เพศ", p.pet_sex_th],
+    ["⏳", "อายุ", p.age_text || "ไม่ระบุวันเกิด"],
+    ["🎂", "วันเกิด", p.petbirthday],
+    ["⚖️", "น้ำหนักล่าสุด", p.weight_kg ? p.weight_kg + " กก." : "-"],
+    ["🔖", "HN", p.hn],
+    ["📌", "มาใช้บริการครั้งแรก", d.stats.first_visit_th],
+    ["🕘", "มาครั้งล่าสุด", d.stats.last_visit_th],
   ];
-  $("profileRows").innerHTML = rows.map(([k, v]) =>
-    `<div class="row"><span class="k">${esc(k)}</span><span class="v">${esc(v || "-")}</span></div>`).join("");
+  $("profileRows").innerHTML = rows.map(([ic, k, v]) =>
+    `<div class="row"><span class="k"><span class="ic">${esc(ic)}</span>${esc(k)}</span>` +
+    `<span class="v">${esc(v || "-")}</span></div>`).join("");
 }
 
 function renderVaccine(d) {
@@ -287,8 +294,8 @@ function render(d) {
   DATA = d;
   renderProfile(d); renderVaccine(d); renderNextAppt(d);
   $("footNote").textContent =
-    "ระบบแสดงประวัติตั้งแต่ " + d.data_since_th + " ซึ่งเป็นวันที่โรงพยาบาลเริ่มใช้ระบบบันทึกนี้ " +
-    "หากต้องการประวัติก่อนหน้านั้น กรุณาติดต่อเจ้าหน้าที่ 080-4288181";
+    "ระบบแสดงประวัติวัคซีนตั้งแต่เข้ามารับบริการที่โรงพยาบาลสัตว์หมาแมวเลิฟลี่เท่านั้น " +
+    "หากต้องการประวัติก่อนหน้านั้น กรุณาติดต่อเจ้าหน้าที่ 090-1556446";
   $("loading").classList.add("hide");
   $("app").classList.remove("hide");
 }
