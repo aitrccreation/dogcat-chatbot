@@ -9,10 +9,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 :root{
-  --teal:#15656B; --teal-dark:#0E4A4F; --teal-soft:#E4F0F0;
-  --peach:#FDEBDD; --orange:#E8823C; --cream:#FBF7F2;
-  --ink:#1F2A2E; --muted:#6B7B80; --line:#E9E2D9;
-  --ok:#2F8F5B; --ok-bg:#E6F4EB; --warn:#C2760E; --warn-bg:#FCF0DC; --danger:#C0392B; --danger-bg:#FBEAE8;
+  /* น้ำเงินโทนเดียวกับข้อความแจ้งนัดที่ส่งใน LINE (#2563EB) พื้นสว่างโทนเทาอมฟ้า */
+  --blue:#2563EB; --blue-dark:#1D4ED8; --blue-deep:#1E3A8A; --blue-soft:#EFF6FF; --blue-line:#DBEAFE;
+  --cream:#F6F8FC; --ink:#1E293B; --muted:#64748B; --line:#E5EAF2; --hair:#EEF2F8;
+  --rose:#DB2777;
+  --warn:#B45309; --warn-bg:#FFFBEB; --warn-line:#FDE9C8;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 body{margin:0;background:var(--cream);color:var(--ink);
@@ -20,63 +21,65 @@ body{margin:0;background:var(--cream);color:var(--ink);
      font-size:15px;line-height:1.65;padding-bottom:32px}
 .wrap{max-width:460px;margin:0 auto;padding:0 14px}
 .topbar{display:flex;align-items:center;gap:10px;padding:14px 0 10px}
-.logo{width:34px;height:34px;border-radius:10px;background:var(--teal);color:#fff;
-      display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none}
-.brand{font-weight:700;font-size:15px;color:var(--teal-dark);line-height:1.2}
+.logo{width:38px;height:38px;border-radius:10px;background:#fff;flex:none;object-fit:contain;
+      border:1px solid var(--line)}
+.brand{font-weight:700;font-size:15px;color:var(--blue-deep);line-height:1.2}
 .brand small{display:block;font-weight:400;font-size:11px;color:var(--muted)}
 
 .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;margin-bottom:12px}
 .pet-head{display:flex;gap:14px;align-items:center}
-.avatar{width:66px;height:66px;border-radius:50%;background:var(--peach);flex:none;overflow:hidden;
+.avatar{width:66px;height:66px;border-radius:50%;background:var(--blue-soft);flex:none;overflow:hidden;
         display:flex;align-items:center;justify-content:center}
 .avatar img{width:100%;height:100%;object-fit:cover}
 .avatar svg{width:100%;height:100%;display:block}
 .pet-name{font-size:21px;font-weight:700;margin:0;display:flex;align-items:center;gap:6px}
-.sex{font-size:14px;color:var(--orange)}
+.sex{font-size:14px;font-weight:600}
+.sex.male{color:var(--blue)}
+.sex.female{color:var(--rose)}
 .pet-sub{margin:2px 0 0;font-size:13px;color:var(--muted)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
-.chip{background:var(--teal-soft);color:var(--teal-dark);font-size:12px;font-weight:500;
+.chip{background:var(--blue-soft);color:var(--blue-deep);font-size:12px;font-weight:500;
       padding:4px 11px;border-radius:999px}
 
 .tabs{display:flex;gap:4px;background:#fff;border:1px solid var(--line);border-radius:14px;
       padding:4px;margin-bottom:12px;position:sticky;top:0;z-index:5}
 .tab{flex:1;text-align:center;padding:9px 4px;font-size:13px;font-weight:500;color:var(--muted);
      border-radius:10px;cursor:pointer;border:none;background:none;font-family:inherit}
-.tab[aria-selected="true"]{background:var(--teal);color:#fff}
+.tab[aria-selected="true"]{background:var(--blue);color:#fff}
 
-.row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #F3EEE7;font-size:14px}
+.row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid var(--hair);font-size:14px}
 .row:last-child{border-bottom:none}
 .row .k{color:var(--muted)}
 .row .v{font-weight:500;text-align:right}
 
-.vac{padding:12px 0;border-bottom:1px solid #F3EEE7}
+.vac{padding:12px 0;border-bottom:1px solid var(--hair)}
 .vac:last-child{border-bottom:none}
 .vac-head{display:flex;align-items:center;gap:11px}
-.dose-list{list-style:none;margin:10px 0 0;padding:9px 0 0 45px;border-top:1px dashed #EFE9E1}
+.dose-list{list-style:none;margin:10px 0 0;padding:9px 0 0 45px;border-top:1px dashed var(--line)}
 .dose-list li{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;line-height:1.85;margin-bottom:3px}
-.dose-no{flex:none;width:19px;height:19px;border-radius:50%;background:var(--teal-soft);color:var(--teal);
+.dose-no{flex:none;width:19px;height:19px;border-radius:50%;background:var(--blue-soft);color:var(--blue);
          font-size:10px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;margin-top:2px}
 .dose-date{flex:none;color:var(--ink);font-weight:500;min-width:88px}
 .dose-name{color:var(--muted);min-width:0;overflow-wrap:anywhere}
-.vac-ic{width:34px;height:34px;border-radius:10px;background:var(--teal-soft);color:var(--teal);
+.vac-ic{width:34px;height:34px;border-radius:10px;background:var(--blue-soft);color:var(--blue);
         display:flex;align-items:center;justify-content:center;font-size:17px;flex:none}
 .vac-main{flex:1;min-width:0}
 .vac-name{font-size:14px;font-weight:600;margin:0}
 .vac-sub{font-size:12px;color:var(--muted);margin:1px 0 0}
 
-.alert{display:flex;gap:11px;background:var(--peach);border-radius:16px;padding:13px 15px;margin-bottom:12px}
+.alert{display:flex;gap:11px;background:var(--warn-bg);border-radius:16px;padding:13px 15px;margin-bottom:12px}
 .alert .ic{font-size:19px;flex:none}
-.alert b{display:block;font-size:13px;color:#8A4B12}
-.alert span{font-size:12.5px;color:#9A6234}
+.alert b{display:block;font-size:13px;color:var(--warn)}
+.alert span{font-size:12.5px;color:#96703A}
 
-.appt{display:flex;gap:12px;background:var(--teal);color:#fff;border-radius:18px;padding:15px 16px;margin-bottom:12px}
+.appt{display:flex;gap:12px;background:var(--blue);color:#fff;border-radius:18px;padding:15px 16px;margin-bottom:12px}
 .appt .ic{font-size:21px;flex:none;line-height:1.3}
 .appt b{display:block;font-size:12px;font-weight:500;opacity:.85}
 .appt .d{font-size:17px;font-weight:700;margin:1px 0 2px}
 .appt .r{font-size:12.5px;opacity:.9;line-height:1.55}
-.memorial{background:#F1EEF7;border-radius:16px;padding:13px 16px;margin-bottom:12px;
-          font-size:13px;color:#4C4166;text-align:center;line-height:1.7}
-.cta{display:block;width:100%;background:var(--teal);color:#fff;border:none;border-radius:14px;
+.memorial{background:#F1F4FA;border-radius:16px;padding:13px 16px;margin-bottom:12px;
+          font-size:13px;color:#475569;text-align:center;line-height:1.7}
+.cta{display:block;width:100%;background:var(--blue);color:#fff;border:none;border-radius:14px;
      padding:14px;font-size:15px;font-weight:600;font-family:inherit;cursor:pointer;margin-top:4px}
 .note{font-size:11.5px;color:var(--muted);text-align:center;margin:14px 0 0;line-height:1.6}
 .empty{text-align:center;color:var(--muted);font-size:14px;padding:28px 10px}
@@ -84,13 +87,13 @@ body{margin:0;background:var(--cream);color:var(--ink);
 .switcher{display:flex;gap:7px;overflow-x:auto;padding-bottom:4px;margin-bottom:10px}
 .switcher button{white-space:nowrap;background:#fff;border:1px solid var(--line);border-radius:999px;
       padding:6px 14px;font-size:13px;font-family:inherit;color:var(--muted);cursor:pointer}
-.switcher button[aria-pressed="true"]{background:var(--teal-dark);border-color:var(--teal-dark);color:#fff;font-weight:500}
+.switcher button[aria-pressed="true"]{background:var(--blue-deep);border-color:var(--blue-deep);color:#fff;font-weight:500}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
-    <div class="logo">DC</div>
+    <img class="logo" src="/static/petbook_logo.png" alt="โลโก้โรงพยาบาลสัตว์หมาแมวเลิฟลี่">
     <div class="brand">สมุดประจำตัว<small>Dog and Cat Lovely Pet Hospital</small></div>
   </div>
 
@@ -207,6 +210,7 @@ function renderProfile(d) {
     : petArt(p.pettype);
   $("petName").textContent = p.petname || "-";
   $("petSex").textContent = sexMark(p.petsex);
+  $("petSex").className = "sex " + (p.petsex === "male" || p.petsex === "female" ? p.petsex : "");
   $("petSub").textContent = [p.pet_type_th, p.petbreed].filter(Boolean).join(" · ");
   const chips = [];
   if (p.age_text) chips.push(p.age_text);
